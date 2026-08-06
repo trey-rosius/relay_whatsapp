@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Relay | WhatsApp Matchmaker</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <style>
+    /* Dark Mode Global Overrides */
+    :root {
+      /* Rich, deep dark theme */
+      --bg: #030712;
+      --surface-glass: rgba(17, 24, 39, 0.65);
+      --surface-border: rgba(255, 255, 255, 0.08);
+      
+      --text: #f9fafb;
+      --text-muted: #9ca3af;
+      
+      /* Vibrant Brand Gradients */
+      --brand-primary: #3b82f6;
+      --brand-glow: rgba(59, 130, 246, 0.4);
+      --gradient-accent: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+      
+      --success: #10b981;
+      --success-glow: rgba(16, 185, 129, 0.2);
+      
+      --warning: #f59e0b;
+      --warning-glow: rgba(245, 158, 11, 0.2);
+
+      --radius: 16px;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* Ambient Animated Orbs */
+    .bg-orbs {
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      z-index: -1;
+      overflow: hidden;
+      background: #030712;
+    }
+    
+    .bg-orbs::before, .bg-orbs::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(100px);
+      opacity: 0.5;
+      animation: float 20s infinite ease-in-out alternate;
+    }
+
+    .bg-orbs::before {
+      top: -10%; right: -5%;
+      width: 600px; height: 600px;
+      background: rgba(139, 92, 246, 0.25);
+    }
+    
+    .bg-orbs::after {
+      bottom: -10%; left: -10%;
+      width: 500px; height: 500px;
+      background: rgba(59, 130, 246, 0.25);
+      animation-delay: -10s;
+    }
+
+    @keyframes float {
+      0% { transform: translate(0, 0) scale(1); }
+      100% { transform: translate(-50px, 50px) scale(1.1); }
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1200px;
+      padding: 40px 24px;
+      box-sizing: border-box;
+    }
+
+    /* Typography */
+    h1, h2, h3 { 
+      font-family: 'Outfit', sans-serif; 
+      font-weight: 700; 
+      margin: 0; 
+      letter-spacing: -0.02em;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .header h1 {
+      font-size: 3rem;
+      background: var(--gradient-accent);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      font-weight: 400;
+    }
+
+    /* Buttons */
+    button {
+      padding: 12px 20px;
+      border: none;
+      border-radius: 10px;
+      background: var(--gradient-accent);
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 4px 14px var(--brand-glow);
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
+    }
+
+    button:active { transform: translateY(0); }
+
+    button.secondary {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--surface-border);
+      box-shadow: none;
+      color: var(--text);
+    }
+
+    button.secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Glassmorphism Cards */
+    .card {
+      background: var(--surface-glass);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      padding: 32px;
+      margin-bottom: 24px;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .card:hover {
+      box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.7);
+    }
+
+    .card h3 {
+      font-size: 1.5rem;
+      margin-bottom: 6px;
+      color: #fff;
+    }
+
+    .card > p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      margin-top: 0;
+      margin-bottom: 24px;
+    }
+
+    /* Layout */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 24px;
+    }
+
+    /* Status Banner */
+    .status-banner {
+      padding: 16px 20px;
+      border-radius: 12px;
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: #38bdf8;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 24px;
+      animation: slideDown 0.4s ease-out;
+    }
+
+    @keyframes slideDown {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Modern Lists (Replacing Tables) */
+    .item-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .list-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--surface-border);
+      border-radius: 10px;
+      transition: background 0.2s ease;
+    }
+
+    .list-item:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .item-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    
+    .item-title {
+      font-weight: 600;
+      font-size: 1.05rem;
+      color: #fff;
+    }
+
+    .item-meta {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      display: flex;
+      gap: 12px;
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .badge-matched { background: var(--success-glow); color: var(--success); border: 1px solid rgba(16,185,129,0.3); }
+    .badge-pending { background: var(--warning-glow); color: var(--warning); border: 1px solid rgba(245,158,11,0.3); }
+    .badge-active { background: var(--brand-glow); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
+
+    /* Custom Scrollbar for Terminal Log */
+    .terminal-log {
+      max-height: 300px;
+      overflow-y: auto;
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid var(--surface-border);
+      border-radius: 10px;
+      padding: 16px;
+      font-family: 'JetBrains Mono', 'Menlo', 'Courier New', monospace;
+    }
+
+    @supports not (scrollbar-color: auto) {
+      .terminal-log::-webkit-scrollbar { width: 8px; }
+      .terminal-log::-webkit-scrollbar-track { background: transparent; }
+      .terminal-log::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 10px; }
+    }
+    
+    .terminal-log { scrollbar-color: rgba(255,255,255,0.2) transparent; scrollbar-width: thin; }
+
+    .log-entry {
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      font-size: 0.85rem;
+      display: flex;
+      gap: 16px;
+    }
+    
+    .log-time { color: var(--text-muted); }
+    .log-type { color: #8b5cf6; font-weight: 600; min-width: 150px; }
+    .log-details { color: #d1d5db; word-break: break-all; }
+  </style>
+  <script type="module" crossorigin src="/assets/index-_e19xV7j.js"></script>
+</head>
+<body>
+  <div class="bg-orbs"></div>
+  <div class="container">
+    <div class="header">
+      <h1>Relay Marketplace</h1>
+      <div class="subtitle">Always-Online Community Webhook, Vision & Educational Book Matchmaker</div>
+    </div>
+    <div id="app"></div>
+  </div>
+</body>
+</html>
+
