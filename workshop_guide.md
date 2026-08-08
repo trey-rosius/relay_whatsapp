@@ -13,7 +13,7 @@ This workshop is structured into **4 comprehensive learning tracks** covering mo
 ### 🏗️ Track 1: Serverless & AWS Building Blocks Architecture
 1. **Composable Cloud Primitives**: Learn how to use `@aws-blocks/blocks` (`Scope`, `DistributedTable`, `AppSetting`, `KnowledgeBase`, `RawRoute`, and `ApiNamespace`) to construct end-to-end cloud applications in pure TypeScript.
 2. **End-to-End Type Safety & Invisible RPC**: Connect a React frontend to serverless backend methods without writing manual `fetch()` calls, OpenAPI specs, or running client codegen tools.
-3. **Double-Sided Marketplace Data Modeling**: Design DynamoDB single-table schemas with Global Secondary Indexes (`byConcept`) for $O(1)$ sub-millisecond buyer/seller matchmaking.
+3. **Double-Sided Marketplace Data Modeling**: Design dedicated DynamoDB tables (`active-inventory` & `demand-board`) with Global Secondary Indexes (`byConcept`) for $O(1)$ sub-millisecond buyer/seller matchmaking.
 
 ### 🤖 Track 2: Generative AI, Multimodal Vision & Vector RAG
 4. **Zero-Shot Multilingual Intent Parsing**: Use **Amazon Bedrock (Amazon Nova Lite & Nova Pro)** via the Bedrock Converse API to extract structured JSON from unstructured, messy parent messages in both English and French.
