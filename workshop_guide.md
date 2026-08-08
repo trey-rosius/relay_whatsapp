@@ -17,7 +17,7 @@ This workshop is structured into **4 comprehensive learning tracks** covering mo
 
 ### 🤖 Track 2: Generative AI, Multimodal Vision & Vector RAG
 4. **Zero-Shot Multilingual Intent Parsing**: Use **Amazon Bedrock (Amazon Nova Lite & Nova Pro)** via the Bedrock Converse API to extract structured JSON from unstructured, messy parent messages in both English and French.
-5. **Multimodal Media Ingestion**: Fetch, decode, and process parent book photos from Meta's CDN and analyze them using vision-capable foundation models.
+5. **Multimodal Media Ingestion**: Fetch, decode, and process parent book photos from Meta's CDN and analyze them using vision-capable foundation models (**Amazon Nova Lite & Nova Pro**).
 6. **Vector Search & S3 Knowledge Bases**: Implement semantic search and document retrieval using **Amazon Bedrock KnowledgeBase** and S3 Vectors, including chunking strategies and strict 2KB payload constraints.
 
 ### ⚡ Track 3: Failure-Resilient Workflow Orchestration
