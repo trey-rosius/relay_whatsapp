@@ -8,11 +8,26 @@ You can use this guide to teach students or team members how to combine **AWS Bu
 
 ## 🎯 Workshop Agenda & Learning Objectives
 
-1. **AWS Building Blocks Architecture**: Understand how `Scope`, `DistributedTable`, `AppSetting`, `KnowledgeBase`, `RawRoute`, and `ApiNamespace` work together.
-2. **AI Intent Extraction**: Learn how to use **Amazon Nova Lite / Pro** via Bedrock Converse API for zero-shot bilingual (`EN`/`FR`) intent parsing (Offers vs Demands).
-3. **Durable Execution Workflows**: Implement failure-resilient long-running workflows with `withDurableExecution` and `context.step()`.
-4. **Data Normalization & Matchmaking**: Build a double-sided marketplace matchmaker with Global Secondary Indexes (GSIs) in DynamoDB.
-5. **WhatsApp Ingress & Egress**: Handle Meta Webhook handshakes and send automated WhatsApp notification messages.
+This workshop is structured into **4 comprehensive learning tracks** covering modern cloud architecture, generative AI, serverless workflows, and production DevOps:
+
+### 🏗️ Track 1: Serverless & AWS Building Blocks Architecture
+1. **Composable Cloud Primitives**: Learn how to use `@aws-blocks/blocks` (`Scope`, `DistributedTable`, `AppSetting`, `KnowledgeBase`, `RawRoute`, and `ApiNamespace`) to construct end-to-end cloud applications in pure TypeScript.
+2. **End-to-End Type Safety & Invisible RPC**: Connect a React frontend to serverless backend methods without writing manual `fetch()` calls, OpenAPI specs, or running client codegen tools.
+3. **Double-Sided Marketplace Data Modeling**: Design DynamoDB single-table schemas with Global Secondary Indexes (`byConcept`) for $O(1)$ sub-millisecond buyer/seller matchmaking.
+
+### 🤖 Track 2: Generative AI, Multimodal Vision & Vector RAG
+4. **Zero-Shot Multilingual Intent Parsing**: Use **Amazon Bedrock (Amazon Nova Lite & Nova Pro)** via the Bedrock Converse API to extract structured JSON from unstructured, messy parent messages in both English and French.
+5. **Multimodal Media Ingestion**: Fetch, decode, and process parent book photos from Meta's CDN and analyze them using vision-capable foundation models.
+6. **Vector Search & S3 Knowledge Bases**: Implement semantic search and document retrieval using **Amazon Bedrock KnowledgeBase** and S3 Vectors, including chunking strategies and strict 2KB payload constraints.
+
+### ⚡ Track 3: Failure-Resilient Workflow Orchestration
+7. **AWS Lambda Durable Functions**: Master long-running, fault-tolerant serverless workflows using `withDurableExecution` and `context.step()`, ensuring network calls to Bedrock and Meta are idempotent, retryable, and memoized across failures.
+8. **Real-time Event Observability**: Build a structured lifecycle event stream (`ProcessingStarted`, `ExtractionComplete`, `MatchFound`, `ListingAdded`) for live monitoring, telemetry, and debugging.
+
+### 🌐 Track 4: Third-Party Ingress, Security & Cloud Deployment
+9. **Meta WhatsApp Cloud API Integration**: Configure webhook handshakes (`GET /webhook`), process real-time inbound message streams (`POST /webhook`), and dispatch automated outbound WhatsApp notifications.
+10. **Local-First Development & One-Click Cloud Deployment**: Rapidly develop and test full AWS architectures locally using in-memory mocks (`npm run dev` & `npm run test:e2e`), and deploy to live AWS infrastructure (CloudFront, S3, API Gateway, Lambda, DynamoDB) with `npm run deploy`.
+
 
 ---
 
