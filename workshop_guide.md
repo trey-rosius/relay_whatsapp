@@ -16,6 +16,38 @@ You can use this guide to teach students or team members how to combine **AWS Bu
 
 ---
 
+## 📋 Prerequisites for Participants & Instructors
+
+Before starting the workshop, ensure you and your participants have set up the following:
+
+### 1. Developer Environment & Local Tools
+- **Node.js:** `v20.x` or later installed (`node -v`).
+- **Package Manager:** `npm` (v10+) or `pnpm` / `yarn`.
+- **Git:** Installed and configured (`git --version`).
+- **Code Editor:** VS Code, Antigravity IDE, or any modern TypeScript editor.
+
+### 2. AWS Account & Model Access
+- **AWS Account:** Active AWS Account with permissions to create Lambda functions, DynamoDB tables, API Gateways, CloudFront distributions, and S3 buckets.
+- **AWS CLI:** Configured locally with credentials (`aws configure`) pointing to region `us-east-1` (or your preferred Bedrock region).
+- **Amazon Bedrock Model Access:**
+  - Open AWS Console → **Amazon Bedrock** → **Model access**.
+  - Request and verify access is **Granted** for **Amazon Nova Lite** (`amazon.nova-lite-v1:0`), **Amazon Nova Pro** (`amazon.nova-pro-v1:0`), and **Titan Embeddings G1 - Text**.
+
+### 3. Meta (Facebook) WhatsApp Cloud API Setup
+- **Meta Developer Account:** Registered at [developers.facebook.com](https://developers.facebook.com).
+- **Meta Business Portfolio:** A Meta Business Account with an Admin System User.
+- **WhatsApp Cloud API Credentials:**
+  - `WHATSAPP_TOKEN`: Permanent System User Access Token with `whatsapp_business_messaging` and `whatsapp_business_management` permissions.
+  - `WHATSAPP_PHONE_NUMBER_ID`: Verified WhatsApp Business Phone Number ID.
+  - `WHATSAPP_VERIFY_TOKEN`: Webhook handshake verification string (e.g. `my_verify_token_123`).
+  - *(Refer to [facebook_whatsapp_setup_guide.md](file:///Users/ro/Documents/playground/books-block-app/facebook_whatsapp_setup_guide.md) for the complete 7-step guide).*
+
+### 4. Recommended Background Knowledge
+- Basic proficiency in **TypeScript / JavaScript** and `async/await`.
+- Fundamental understanding of Webhooks, JSON-RPC, and NoSQL databases (DynamoDB).
+
+---
+
 ## 🧩 Section-by-Section Code Breakdown (`aws-blocks/index.ts`)
 
 ---
