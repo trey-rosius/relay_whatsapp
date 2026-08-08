@@ -516,7 +516,8 @@ export function parseParentMessageIntents(text: string): ExtractedIntentItem[] {
 }
 
 /**
- * LLM-powered Intent Classifier using Amazon Bedrock (Claude 3.5 Haiku).
+ * LLM-powered Intent Classifier using Amazon Bedrock (Amazon Nova Lite / Pro).
+ * Extracts structured JSON intents without keyword heuristics.
  * Uses zero-shot semantic understanding instead of keyword matching to classify
  * user messages into 'offer', 'demand', 'catalog', 'demand_board', or 'greeting'.
  * Falls back to rule-based parser if Bedrock is unreachable or in offline dev mode.
@@ -762,7 +763,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
       return { textOnly: payload.message_text || 'No media provided' };
     });
 
-    // Step 2: Vision & Text Extraction via Amazon Bedrock (Claude 3.5 Haiku / Sonnet)
+    // Step 2: Vision & Text Extraction via Amazon Bedrock (Amazon Nova Lite / Pro)
     const extractedIntents = await context.step(`bedrock-vision-extraction-${reqId}`, async () => {
       const textToAnalyze = payload.message_text || 'Year 5 Chemistry Book in excellent condition';
       return await parseParentMessageIntentsWithLLM(textToAnalyze);
