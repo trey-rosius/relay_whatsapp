@@ -261,270 +261,59 @@ export interface ExtractedIntentItem {
   replyMessage?: string;
 }
 
-const GREETING_REGEX = /^\s*(hi|hello|hey|good morning|good afternoon|good evening|greetings|hola|thx|thanks|thank you|ok|okay|cool|help|menu|commands|info|bonjour|salut|aide|commandes|merci)\s*!*$/i;
-
-const TRANSLATIONS = {
-  greeting: {
-    en: "Hello! 👋 Welcome to Relay! You can:\n1. Share books: 'I have Year 3 books'\n2. Ask for books: 'Looking for Year 9 Maths'\n3. View available books: 'catalog'\n4. View requested books: 'demand board'",
-    fr: "Bonjour ! 👋 Bienvenue sur Relay ! Vous pouvez :\n1. Partager des livres : 'J'ai des livres de l'année 3'\n2. Demander des livres : 'Je cherche des livres de maths année 9'\n3. Voir les livres disponibles : 'catalogue'\n4. Voir les livres demandés : 'demandes'"
-  },
-  greetingFallback: {
-    en: "Hello! 👋 Welcome to the Community Books Marketplace bot. Send a photo of your book or type what you're looking for.",
-    fr: "Bonjour ! 👋 Bienvenue sur le bot de la place de marché de livres. Envoyez une photo de votre livre ou dites-nous ce que vous cherchez."
-  },
-  catalogEmpty: {
-    en: "There are currently no books listed in the community catalog. Be the first to list one!",
-    fr: "Il n'y a actuellement aucun livre listé dans le catalogue de la communauté. Soyez le premier à en lister un !"
-  },
-  catalogList: {
-    en: "Here are the books currently available in the community:\n\n{list}\n\nReply with \"Looking for [Book Name]\" to request one of these!",
-    fr: "Voici les livres actuellement disponibles dans la communauté :\n\n{list}\n\nRépondez avec \"Je cherche [Nom du livre]\" pour en demander un !"
-  },
-  demandBoardEmpty: {
-    en: "The Demand Board is currently empty! No parents are looking for books right now.",
-    fr: "Le tableau des demandes est actuellement vide ! Aucun parent ne cherche de livres en ce moment."
-  },
-  demandBoardList: {
-    en: "Here are the books parents in the community are currently looking for:\n\n{list}\n\nReply with \"I have [Book Name]\" if you can help!",
-    fr: "Voici les livres que les parents de la communauté recherchent actuellement :\n\n{list}\n\nRépondez avec \"J'ai [Nom du livre]\" si vous pouvez aider !"
-  },
-  matchFoundBuyer: {
-    en: "Great news! We found a parent selling {title}! Connecting you now. You can contact them at: {phone}",
-    fr: "Bonne nouvelle ! Nous avons trouvé un parent qui vend {title} ! Mise en relation en cours. Vous pouvez les contacter au : {phone}"
-  },
-  matchFoundSeller: {
-    en: "Good news! A parent is interested in your {title}. Their number is {phone}. They should be reaching out soon!",
-    fr: "Bonne nouvelle ! Un parent est intéressé par votre {title}. Son numéro est le {phone}. Il devrait vous contacter bientôt !"
-  },
-  demandPosted: {
-    en: "Your request for {title} has been posted on the Demand Board. We will notify you as soon as another parent lists it!",
-    fr: "Votre demande pour {title} a été publiée sur le tableau des demandes. Nous vous informerons dès qu'un autre parent le mettra en ligne !"
-  },
-  matchFoundOfferSeller: {
-    en: "Great news! We found a parent looking for {title}! Connecting you now. You can contact them at: {phone}",
-    fr: "Bonne nouvelle ! Nous avons trouvé un parent qui cherche {title} ! Mise en relation en cours. Vous pouvez les contacter au : {phone}"
-  },
-  matchFoundOfferBuyer: {
-    en: "Good news! A parent just listed the {title} you requested. Their number is {phone}. They should be reaching out soon!",
-    fr: "Bonne nouvelle ! Un parent vient de mettre en ligne {title} que vous avez demandé. Son numéro est le {phone}. Il devrait vous contacter bientôt !"
-  },
-  listingActive: {
-    en: "Your listing for {title} is now active in your parent catalog!",
-    fr: "Votre annonce pour {title} est maintenant active dans votre catalogue parent !"
-  },
-  availableFormat: {
-    en: "{count} available",
-    fr: "{count} disponible(s)"
-  }
-};
-
 /**
- * Smart parser for parent group chat messages.
- * Handles single/multi-item lists, offer messages ("have year 3"), demand messages ("looking for year 3"),
- * mixed messages ("we have year 9 & 10, we need year 12"), and filters greetings/spam.
+ * Generates natural, localized WhatsApp messages dynamically using Amazon Nova LLMs.
+ * Completely eliminates hardcoded translation dictionaries in favor of real-time AI generation.
  */
-export function parseParentMessageIntents(text: string): ExtractedIntentItem[] {
-  const textTrimmed = text.trim();
-  const textLower = textTrimmed.toLowerCase();
-  const results: ExtractedIntentItem[] = [];
+export async function generateLLMMessage(
+  scenario: 'greeting' | 'catalog_empty' | 'demand_board_empty' | 'match_buyer' | 'match_seller' | 'demand_posted' | 'listing_active',
+  params: { title?: string; phone?: string; lang?: 'en' | 'fr' }
+): Promise<string> {
+  const lang = params.lang || 'en';
+  const prompt = `You are an AI assistant for a parent school book marketplace bot on WhatsApp.
+Generate a concise, friendly WhatsApp message for the following scenario:
 
-  const isFrench = 
-    textLower.includes('bonjour') || 
-    textLower.includes('salut') || 
-    textLower.includes('cherche') || 
-    textLower.includes('besoin') || 
-    textLower.includes('j\'ai') || 
-    textLower.includes('catalogue') || 
-    textLower.includes('demandes') || 
-    textLower.includes('année');
-  const lang = isFrench ? 'fr' : 'en';
+Scenario: ${scenario}
+Target Language: ${lang === 'fr' ? 'French' : 'English'}
+Context Data: ${JSON.stringify(params)}
 
-  // 1. Detect pure greetings / chit-chat / spam
-  if (GREETING_REGEX.test(textTrimmed) || textTrimmed.length < 3) {
-    return [
-      {
-        intent: 'greeting',
-        lang,
-        concept: 'Greeting',
-        title: 'Greeting / Helpful Guidance',
-        domain: 'Humanities',
-        providerCategory: 'PrimarySchool',
-        conditionType: 'Good',
-        description: textTrimmed,
-        replyMessage: TRANSLATIONS.greeting[lang],
-      },
-    ];
+Guidelines:
+- Include relevant emojis (📚, 👋, 🤝, 💡).
+- Keep it clear, polite, and direct for parents.
+- Output ONLY the message text. Do NOT wrap in quotes or code blocks.`;
+
+  try {
+    const response = await bedrockClient.send(
+      new ConverseCommand({
+        modelId: 'us.amazon.nova-lite-v1:0',
+        messages: [{ role: 'user', content: [{ text: prompt }] }],
+        inferenceConfig: { temperature: 0.3, maxTokens: 250 },
+      })
+    );
+    const text = response.output?.message?.content?.[0]?.text?.trim();
+    if (text) return text;
+  } catch (err) {
+    console.warn('[LLM-MessageGen] Primary model error, trying Nova Pro:', err);
+    const response = await bedrockClient.send(
+      new ConverseCommand({
+        modelId: 'us.amazon.nova-pro-v1:0',
+        messages: [{ role: 'user', content: [{ text: prompt }] }],
+        inferenceConfig: { temperature: 0.3, maxTokens: 250 },
+      })
+    );
+    const text = response.output?.message?.content?.[0]?.text?.trim();
+    if (text) return text;
   }
 
-  const isCatalog =
-    textLower.includes('catalog') ||
-    textLower.includes('list books') ||
-    textLower.includes('what books') ||
-    textLower.includes('show books') ||
-    textLower.includes('available books') ||
-    textLower.includes('catalogue');
-
-  const isDemandBoard =
-    textLower.includes('demand board') ||
-    textLower.includes('wishlist') ||
-    textLower.includes('requested books') ||
-    textLower.includes('what parents are looking for') ||
-    textLower.includes('demandes');
-
-  if (isCatalog) {
-    return [
-      {
-        intent: 'catalog',
-        lang,
-        concept: 'Catalog',
-        title: 'Community Catalog',
-        domain: 'Humanities',
-        providerCategory: 'PrimarySchool',
-        conditionType: 'Good',
-        description: textTrimmed,
-      },
-    ];
-  }
-
-  if (isDemandBoard) {
-    return [
-      {
-        intent: 'demand_board',
-        lang,
-        concept: 'DemandBoard',
-        title: 'Community Demand Board',
-        domain: 'Humanities',
-        providerCategory: 'PrimarySchool',
-        conditionType: 'Good',
-        description: textTrimmed,
-      },
-    ];
-  }
-
-  const lines = text.split(/[\n.]+/).filter(l => l.trim().length > 0);
-
-  for (const line of lines) {
-    const lineLower = line.toLowerCase();
-    const isDemand =
-      lineLower.includes('need') ||
-      lineLower.includes('looking for') ||
-      lineLower.includes('looking') ||
-      lineLower.includes('search') ||
-      lineLower.includes('wanted') ||
-      lineLower.includes('want') ||
-      lineLower.includes('where can i') ||
-      lineLower.includes('do you have') ||
-      lineLower.includes('anyone have') ||
-      lineLower.includes('anyone selling') ||
-      lineLower.includes('anyone got') ||
-      lineLower.includes('cherche') ||
-      lineLower.includes('besoin') ||
-      lineLower.includes('qui a') ||
-      lineLower.includes('quelqu\'un a');
-    const isOffer =
-      lineLower.includes('have') && !lineLower.includes('do you have') && !lineLower.includes('anyone have') ||
-      lineLower.includes('selling') ||
-      lineLower.includes('available') ||
-      lineLower.includes('books for') ||
-      lineLower.includes('j\'ai') ||
-      lineLower.includes('vendre');
-
-    // Demand takes priority over offer if both signals present
-    const defaultIntent: 'offer' | 'demand' = isDemand ? 'demand' : 'offer';
-
-    const numbers: string[] = [];
-    const matches = lineLower.matchAll(/(?:year|année)\s*(\d{1,2})/gi);
-    for (const m of matches) {
-      const num = parseInt(m[1], 10);
-      if (num >= 1 && num <= 13) {
-        if (lineLower.includes('chemistry') || lineLower.includes('chimie')) {
-          numbers.push(`Year${num}Chemistry`);
-        }
-        if (lineLower.includes('science') || lineLower.includes('sciences')) {
-          numbers.push(`Year${num}Science`);
-        }
-        if (lineLower.includes('english') || lineLower.includes('anglais')) {
-          numbers.push(`Year${num}English`);
-        }
-        if (lineLower.includes('math') || lineLower.includes('maths')) {
-          numbers.push(`Year${num}Mathematics`);
-        }
-        if (numbers.length === 0) {
-          numbers.push(`Year${num}Books`);
-        }
-      }
-    }
-
-    // fallback for digits without "year" keyword
-    if (numbers.length === 0) {
-      const digitMatches = lineLower.matchAll(/\b(\d{1,2})\b/g);
-      for (const m of digitMatches) {
-        const num = parseInt(m[1], 10);
-        if (num >= 1 && num <= 13) {
-          numbers.push(`Year${num}Books`);
-        }
-      }
-    }
-
-    if (numbers.length > 0) {
-      for (const concept of numbers) {
-        // Prevent duplicate concept entries for the same clause
-        if (!results.some(r => r.concept === concept && r.intent === defaultIntent)) {
-          results.push({
-            intent: defaultIntent,
-            lang,
-            concept,
-            title: `Books for Year ${concept.replace('Year', '').replace('Books', '')}`,
-            domain: concept.includes('Chemistry') || concept.includes('Science') ? 'Science' : concept.includes('English') ? 'Languages' : concept.includes('Mathematics') ? 'Mathematics' : 'Arts',
-            providerCategory: parseInt(concept.replace('Year', '').replace(/[a-zA-Z]/g, '')) > 8 ? 'HighSchool' : 'MiddleSchool',
-            conditionType: 'Good',
-            description: `Extracted from parent message clause: "${line.trim()}"`,
-          });
-        }
-      }
-    }
-  }
-
-  // Fallback if no year numbers detected but message contains actionable book request
-  if (results.length === 0) {
-    let concept = 'Year5Chemistry';
-    let domain: (typeof DOMAIN_TYPES)[number] = 'Science';
-    let providerCategory: (typeof PROVIDER_CATEGORIES)[number] = 'MiddleSchool';
-    let conditionType: (typeof CONDITION_TYPES)[number] = 'Good';
-
-    if (textLower.includes('aws') || textLower.includes('lambda')) {
-      concept = 'Year12ComputerScience';
-      domain = 'Science';
-      providerCategory = 'HighSchool';
-      conditionType = 'New';
-    }
-
-    const isDemand = textLower.includes('need') || textLower.includes('looking') || textLower.includes('cherche') || textLower.includes('besoin');
-    results.push({
-      intent: isDemand ? 'demand' : 'offer',
-      lang,
-      concept,
-      title: text.slice(0, 50),
-      domain,
-      providerCategory,
-      conditionType,
-      description: text,
-    });
-  }
-
-  return results;
+  throw new Error(`[LLM-MessageGen] Failed to generate message for scenario "${scenario}" online.`);
 }
 
 /**
- * LLM-powered Intent Classifier using Amazon Bedrock (Amazon Nova Lite / Pro).
- * Extracts structured JSON intents without keyword heuristics.
- * Uses zero-shot semantic understanding instead of keyword matching to classify
- * user messages into 'offer', 'demand', 'catalog', 'demand_board', or 'greeting'.
- * Falls back to rule-based parser if Bedrock is unreachable or in offline dev mode.
+ * Pure LLM Intent Classifier powered by Amazon Bedrock (Amazon Nova Lite / Nova Pro).
+ * Online-only zero-shot LLM intelligence without offline fallbacks.
  */
 export async function parseParentMessageIntentsWithLLM(text: string): Promise<ExtractedIntentItem[]> {
-  try {
-    const prompt = `You are an AI intent classification engine for a bilingual (English & French) parent school book marketplace bot on WhatsApp.
+  const prompt = `You are an AI intent classification engine for a bilingual (English & French) parent school book marketplace bot on WhatsApp.
 
 Analyze the user's message semantically. Do NOT rely on simple keyword matching — understand the true intent from full sentence context.
 
@@ -555,66 +344,43 @@ Extract all intents from the message into JSON:
 
 Respond ONLY with valid JSON inside a \`\`\`json block.`;
 
-    let response;
-    try {
-      response = await bedrockClient.send(
-        new ConverseCommand({
-          modelId: 'us.amazon.nova-lite-v1:0',
-          messages: [
-            {
-              role: 'user',
-              content: [{ text: prompt }],
-            },
-          ],
-          inferenceConfig: {
-            temperature: 0.1,
-            maxTokens: 500,
-          },
-        })
-      );
-    } catch {
-      // Fallback to Amazon Nova Pro
-      response = await bedrockClient.send(
-        new ConverseCommand({
-          modelId: 'us.amazon.nova-pro-v1:0',
-          messages: [
-            {
-              role: 'user',
-              content: [{ text: prompt }],
-            },
-          ],
-          inferenceConfig: {
-            temperature: 0.1,
-            maxTokens: 500,
-          },
-        })
-      );
-    }
-
-    const responseText = response.output?.message?.content?.[0]?.text || '';
-    const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) || responseText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[1] || jsonMatch[0]);
-      if (parsed.intents && Array.isArray(parsed.intents) && parsed.intents.length > 0) {
-        return parsed.intents.map((item: any) => {
-          if (item.intent === 'greeting') {
-            item.replyMessage = TRANSLATIONS.greeting[item.lang as 'en' | 'fr'] || TRANSLATIONS.greeting['en'];
-          }
-          item.domain = (DOMAIN_TYPES as readonly string[]).includes(item.domain) ? item.domain : 'Science';
-          item.providerCategory = (PROVIDER_CATEGORIES as readonly string[]).includes(item.providerCategory) ? item.providerCategory : 'HighSchool';
-          item.conditionType = (CONDITION_TYPES as readonly string[]).includes(item.conditionType) ? item.conditionType : 'Good';
-          if (typeof item.concept === 'string') {
-            item.concept = normalizeConceptKey(item.concept);
-          }
-          return item;
-        });
-      }
-    }
-  } catch (err) {
-    console.warn('[LLM-Parser] Bedrock call failed or offline, falling back to rule parser:', err);
+  let response;
+  try {
+    response = await bedrockClient.send(
+      new ConverseCommand({
+        modelId: 'us.amazon.nova-lite-v1:0',
+        messages: [{ role: 'user', content: [{ text: prompt }] }],
+        inferenceConfig: { temperature: 0.1, maxTokens: 500 },
+      })
+    );
+  } catch {
+    response = await bedrockClient.send(
+      new ConverseCommand({
+        modelId: 'us.amazon.nova-pro-v1:0',
+        messages: [{ role: 'user', content: [{ text: prompt }] }],
+        inferenceConfig: { temperature: 0.1, maxTokens: 500 },
+      })
+    );
   }
 
-  return parseParentMessageIntents(text);
+  const responseText = response.output?.message?.content?.[0]?.text || '';
+  const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) || responseText.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    const parsed = JSON.parse(jsonMatch[1] || jsonMatch[0]);
+    if (parsed.intents && Array.isArray(parsed.intents) && parsed.intents.length > 0) {
+      return parsed.intents.map((item: any) => {
+        item.domain = (DOMAIN_TYPES as readonly string[]).includes(item.domain) ? item.domain : 'Science';
+        item.providerCategory = (PROVIDER_CATEGORIES as readonly string[]).includes(item.providerCategory) ? item.providerCategory : 'HighSchool';
+        item.conditionType = (CONDITION_TYPES as readonly string[]).includes(item.conditionType) ? item.conditionType : 'Good';
+        if (typeof item.concept === 'string') {
+          item.concept = normalizeConceptKey(item.concept);
+        }
+        return item;
+      });
+    }
+  }
+
+  throw new Error(`[LLM-Parser] Unable to parse online Bedrock response for message: "${text}"`);
 }
 
 export function normalizeConceptKey(rawConcept: string): string {
@@ -702,7 +468,7 @@ export function buildGroupedCatalogText(activeBooks: ActiveInventoryItem[], lang
     const items = Object.values(subjectsMap);
     parts.push(`\n*${year}*`);
     for (const item of items) {
-      const availableText = (TRANSLATIONS.availableFormat[lang] || TRANSLATIONS.availableFormat['en']).replace('{count}', item.count.toString());
+      const availableText = lang === 'fr' ? `${item.count} disponible(s)` : `${item.count} available`;
       parts.push(`• ${item.displaySubject} (${availableText})`);
     }
   }
@@ -779,7 +545,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
     if (extractedIntents[0]?.intent === 'greeting' || extractedIntents[0]?.intent === 'spam') {
       const lang = extractedIntents[0].lang || 'en';
-      const replyMsg = extractedIntents[0].replyMessage || TRANSLATIONS.greetingFallback[lang];
+      const replyMsg = extractedIntents[0].replyMessage || await generateLLMMessage('greeting', { lang });
       await sendWhatsAppTextMessage(payload.from_phone, replyMsg);
       return {
         status: extractedIntents[0].intent as 'greeting' | 'spam',
@@ -805,10 +571,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
           const activeBooks = allInventory.filter(i => i.status === 'active');
           
           if (activeBooks.length === 0) {
-            await sendWhatsAppTextMessage(
-              payload.from_phone,
-              TRANSLATIONS.catalogEmpty[item.lang]
-            );
+            const emptyMsg = await generateLLMMessage('catalog_empty', { lang: item.lang });
+            await sendWhatsAppTextMessage(payload.from_phone, emptyMsg);
           } else {
             const catalogMessage = buildGroupedCatalogText(activeBooks, item.lang);
             await sendWhatsAppTextMessage(
@@ -825,16 +589,17 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
           const openDemands = allDemands.filter(d => d.status === 'pending');
           
           if (openDemands.length === 0) {
-            await sendWhatsAppTextMessage(
-              payload.from_phone,
-              TRANSLATIONS.demandBoardEmpty[item.lang]
-            );
+            const emptyMsg = await generateLLMMessage('demand_board_empty', { lang: item.lang });
+            await sendWhatsAppTextMessage(payload.from_phone, emptyMsg);
           } else {
             const uniqueRequests = Array.from(new Set(openDemands.map(d => d.requestedQuery)));
             const demandsText = uniqueRequests.map(t => `- ${t}`).join('\n');
+            const header = item.lang === 'fr'
+              ? "Voici les livres recherchés par la communauté :"
+              : "Here are the books parents in the community are currently looking for:";
             await sendWhatsAppTextMessage(
               payload.from_phone,
-              TRANSLATIONS.demandBoardList[item.lang].replace('{list}', demandsText)
+              `${header}\n\n${demandsText}`
             );
           }
           return true;
@@ -874,19 +639,13 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
             });
             overallStatus = 'matched';
             lastMatchedDemandId = demandId;
-            await sendWhatsAppTextMessage(
-              payload.from_phone,
-              TRANSLATIONS.matchFoundBuyer[item.lang].replace('{title}', item.title).replace('{phone}', activeMatch.sellerPhone)
-            );
-            await sendWhatsAppTextMessage(
-              activeMatch.sellerPhone,
-              TRANSLATIONS.matchFoundSeller['en'].replace('{title}', item.title).replace('{phone}', payload.from_phone) // We default to english for the other user
-            );
+            const buyerMsg = await generateLLMMessage('match_buyer', { title: item.title, phone: activeMatch.sellerPhone, lang: item.lang });
+            const sellerMsg = await generateLLMMessage('match_seller', { title: item.title, phone: payload.from_phone, lang: 'en' });
+            await sendWhatsAppTextMessage(payload.from_phone, buyerMsg);
+            await sendWhatsAppTextMessage(activeMatch.sellerPhone, sellerMsg);
           } else {
-            await sendWhatsAppTextMessage(
-              payload.from_phone,
-              TRANSLATIONS.demandPosted[item.lang].replace('{title}', item.title)
-            );
+            const postedMsg = await generateLLMMessage('demand_posted', { title: item.title, lang: item.lang });
+            await sendWhatsAppTextMessage(payload.from_phone, postedMsg);
           }
 
           return demandId;
@@ -919,14 +678,10 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
           overallStatus = 'matched';
           lastMatchedDemandId = matchResult.demand?.demandId;
           const openDemand = matchResult.demand!;
-          await sendWhatsAppTextMessage(
-            payload.from_phone,
-            (TRANSLATIONS.matchFoundOfferSeller[item.lang as 'en' | 'fr'] || TRANSLATIONS.matchFoundOfferSeller['en']).replace('{title}', item.title).replace('{phone}', openDemand.userPhone)
-          );
-          await sendWhatsAppTextMessage(
-            openDemand.userPhone,
-            (TRANSLATIONS.matchFoundOfferBuyer['en']).replace('{title}', item.title).replace('{phone}', payload.from_phone)
-          );
+          const sellerMsg = await generateLLMMessage('match_buyer', { title: item.title, phone: openDemand.userPhone, lang: item.lang });
+          const buyerMsg = await generateLLMMessage('match_seller', { title: item.title, phone: payload.from_phone, lang: 'en' });
+          await sendWhatsAppTextMessage(payload.from_phone, sellerMsg);
+          await sendWhatsAppTextMessage(openDemand.userPhone, buyerMsg);
         } else {
           // No match -> Add to ActiveInventory
           const itemId = await context.step(`publish-active-inventory-${reqId}-${idx}-${item.concept}`, async () => {
@@ -951,10 +706,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
               concept: item.concept,
             });
 
-            await sendWhatsAppTextMessage(
-              payload.from_phone,
-              (TRANSLATIONS.listingActive[item.lang as 'en' | 'fr'] || TRANSLATIONS.listingActive['en']).replace('{title}', item.title)
-            );
+            const activeMsg = await generateLLMMessage('listing_active', { title: item.title, lang: item.lang });
+            await sendWhatsAppTextMessage(payload.from_phone, activeMsg);
 
             return id;
           });
