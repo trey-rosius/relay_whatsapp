@@ -243,6 +243,273 @@ export function withDurableExecution<E, R>(
   };
 }
 
+
+/**
+ * Core Orchestration Handler wrapping Lambda Durable Functions (`withDurableExecution`).
+ */
+export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayload, WebhookProcessingResult>(
+  async (payload, context) => {
+    const reqId = payload.media_id || payload.message_text || `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    // Lifecycle Event 1: Processing Started
+    await context.step(`emit-processing-started-${reqId}`, async () => {
+      return emitLifecycleEvent('ProcessingStarted', {
+        fromPhone: payload.from_phone,
+        mediaId: payload.media_id,
+      });
+    });
+
+    // Step 1: Media Retrieval from Meta Graph API
+    const mediaData = await context.step(`fetch-media-${reqId}`, async () => {
+      if (payload.media_id) {
+        const token = await whatsappTokenSetting.get();
+        return {
+          mediaId: payload.media_id,
+          url: `https://graph.facebook.com/v19.0/${payload.media_id}?access_token=${token}`,
+          mimeType: 'image/jpeg',
+          byteSize: 1024 * 45,
+        };
+      }
+      return { textOnly: payload.message_text || 'No media provided' };
+    });
+
+    // Step 2: Vision & Text Extraction via Amazon Bedrock (Amazon Nova Lite / Pro)
+    const extractedIntents = await context.step(`bedrock-vision-extraction-${reqId}`, async () => {
+      const textToAnalyze = payload.message_text || 'Year 5 Chemistry Book in excellent condition';
+      return await parseParentMessageIntentsWithLLM(textToAnalyze);
+    });
+
+    // Lifecycle Event 2: Extraction Complete
+    await context.step(`emit-extraction-complete-${reqId}`, async () => {
+      return emitLifecycleEvent('ExtractionComplete', {
+        intentsCount: extractedIntents.length,
+        intents: extractedIntents,
+      });
+    });
+
+    if (extractedIntents[0]?.intent === 'greeting' || extractedIntents[0]?.intent === 'spam') {
+      const lang = extractedIntents[0].lang || 'en';
+      const replyMsg = extractedIntents[0].replyMessage || await generateLLMMessage('greeting', { lang });
+      await sendWhatsAppTextMessage(payload.from_phone, replyMsg);
+      return {
+        status: extractedIntents[0].intent as 'greeting' | 'spam',
+        replyMessage: replyMsg,
+        extractedIntentsCount: 1,
+        vectorChunksCount: 0,
+      };
+    }
+
+    let overallStatus: 'processed' | 'matched' | 'added_to_inventory' | 'greeting' | 'spam' = 'processed';
+
+    let lastItemId: string | undefined;
+    let lastMatchedDemandId: string | undefined;
+    let totalVectorChunks = 0;
+
+    // Step 3 & 4: Iterate over each extracted item in the message
+    for (let idx = 0; idx < extractedIntents.length; idx++) {
+      const item = extractedIntents[idx];
+
+      if (item.intent === 'catalog') {
+        await context.step(`process-catalog-${reqId}-${idx}`, async () => {
+          const allInventory = await Array.fromAsync(activeInventory.scan());
+          const activeBooks = allInventory.filter(i => i.status === 'active');
+          
+          if (activeBooks.length === 0) {
+            const emptyMsg = await generateLLMMessage('catalog_empty', { lang: item.lang });
+            await sendWhatsAppTextMessage(payload.from_phone, emptyMsg);
+          } else {
+            const catalogMessage = buildGroupedCatalogText(activeBooks, item.lang);
+            await sendWhatsAppTextMessage(
+              payload.from_phone,
+              catalogMessage
+            );
+          }
+          return true;
+        });
+        continue;
+      } else if (item.intent === 'demand_board') {
+        await context.step(`process-demand-board-${reqId}-${idx}`, async () => {
+          const allDemands = await Array.fromAsync(demandBoard.scan());
+          const openDemands = allDemands.filter(d => d.status === 'pending');
+          
+          if (openDemands.length === 0) {
+            const emptyMsg = await generateLLMMessage('demand_board_empty', { lang: item.lang });
+            await sendWhatsAppTextMessage(payload.from_phone, emptyMsg);
+          } else {
+            const uniqueRequests = Array.from(new Set(openDemands.map(d => d.requestedQuery)));
+            const demandsText = uniqueRequests.map(t => `- ${t}`).join('\n');
+            const header = item.lang === 'fr'
+              ? "Voici les livres recherchés par la communauté :"
+              : "Here are the books parents in the community are currently looking for:";
+            await sendWhatsAppTextMessage(
+              payload.from_phone,
+              `${header}\n\n${demandsText}`
+            );
+          }
+          return true;
+        });
+        continue;
+      } else if (item.intent === 'demand') {
+        // Process Demand (Wishlist entry)
+        await context.step(`process-demand-${reqId}-${idx}-${item.concept}`, async () => {
+          // Check if item is already in ActiveInventory
+          const inventoryMatches = await Array.fromAsync(
+            activeInventory.query({
+              index: 'byConcept',
+              where: { concept: { equals: item.concept } },
+            })
+          );
+          const activeMatch = inventoryMatches.find(i => i.status === 'active');
+
+          const demandId = `demand_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const demandEntry: DemandItem = {
+            demandId,
+            userPhone: payload.from_phone,
+            requestedQuery: item.title,
+            concept: item.concept,
+            domain: item.domain,
+            status: activeMatch ? 'matched' : 'pending',
+            createdAt: Date.now(),
+          };
+
+          await demandBoard.put(demandEntry);
+
+          if (activeMatch) {
+            emitLifecycleEvent('MatchFound', {
+              demandId,
+              userPhone: payload.from_phone,
+              matchedConcept: item.concept,
+              matchedItemId: activeMatch.itemId,
+            });
+            overallStatus = 'matched';
+            lastMatchedDemandId = demandId;
+            const buyerMsg = await generateLLMMessage('match_buyer', { title: item.title, phone: activeMatch.sellerPhone, lang: item.lang });
+            const sellerMsg = await generateLLMMessage('match_seller', { title: item.title, phone: payload.from_phone, lang: 'en' });
+            await sendWhatsAppTextMessage(payload.from_phone, buyerMsg);
+            await sendWhatsAppTextMessage(activeMatch.sellerPhone, sellerMsg);
+          } else {
+            const postedMsg = await generateLLMMessage('demand_posted', { title: item.title, lang: item.lang });
+            await sendWhatsAppTextMessage(payload.from_phone, postedMsg);
+          }
+
+          return demandId;
+        });
+      } else {
+        // Process Offer (Inventory listing)
+        const matchResult = await context.step(`query-demand-board-matching-${reqId}-${idx}-${item.concept}`, async () => {
+          const allDemands = await Array.fromAsync(
+             demandBoard.query({
+              index: 'byConcept',
+              where: { concept: { equals: item.concept } },
+            }));
+          const targetConcept = normalizeConceptKey(item.concept);
+          const openDemand = allDemands.find(d => normalizeConceptKey(d.concept) === targetConcept && d.status === 'pending');
+
+          if (openDemand) {
+            await demandBoard.put({
+              ...openDemand,
+              status: 'matched',
+            });
+
+            emitLifecycleEvent('MatchFound', {
+              demandId: openDemand.demandId,
+              userPhone: openDemand.userPhone,
+              matchedConcept: item.concept,
+            });
+            return { matched: true, demand: openDemand };
+          }
+
+          return { matched: false };
+        });
+
+        if (matchResult.matched) {
+          overallStatus = 'matched';
+          lastMatchedDemandId = matchResult.demand?.demandId;
+          const openDemand = matchResult.demand!;
+          const sellerMsg = await generateLLMMessage('match_buyer', { title: item.title, phone: openDemand.userPhone, lang: item.lang });
+          const buyerMsg = await generateLLMMessage('match_seller', { title: item.title, phone: payload.from_phone, lang: 'en' });
+          await sendWhatsAppTextMessage(payload.from_phone, sellerMsg);
+          await sendWhatsAppTextMessage(openDemand.userPhone, buyerMsg);
+        } else {
+          // No match -> Add to ActiveInventory
+          const itemId = await context.step(`publish-active-inventory-${reqId}-${idx}-${item.concept}`, async () => {
+            const id = `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+            const newItem: ActiveInventoryItem = {
+              itemId: id,
+              title: item.title,
+              domain: item.domain,
+              providerCategory: item.providerCategory,
+              concept: item.concept,
+              conditionType: item.conditionType,
+              description: item.description,
+              sellerPhone: payload.from_phone,
+              status: 'active',
+              createdAt: Date.now(),
+            };
+
+            await activeInventory.put(newItem);
+
+            emitLifecycleEvent('InventoryAdded', {
+              itemId: id,
+              concept: item.concept,
+            });
+
+            const activeMsg = await generateLLMMessage('listing_active', { title: item.title, lang: item.lang });
+            await sendWhatsAppTextMessage(payload.from_phone, activeMsg);
+
+            return id;
+          });
+
+          if (overallStatus !== 'matched') {
+            overallStatus = 'added_to_inventory';
+          }
+          lastItemId = itemId;
+        }
+
+
+
+        // S3 Vector Chunking (<2KB limit)
+        const chunksCount = await context.step(`s3-vector-chunking-${reqId}-${idx}-${item.concept}`, async () => {
+          const chunks = chunkTextForVectorStore(item.description, 2048);
+          const metadata: S3VectorMetadata = {
+            Domain: item.domain,
+            Provider_Category: item.providerCategory,
+            Concept: item.concept,
+            Condition_Type: item.conditionType,
+          };
+
+          emitLifecycleEvent('S3VectorIngested', {
+            chunksCount: chunks.length,
+            maxChunkBytes: 2048,
+            metadata,
+          });
+
+          return chunks.length;
+        });
+
+        totalVectorChunks += chunksCount;
+      }
+    }
+
+    const primaryMetadata = extractedIntents[0] || {
+      title: 'Item',
+      domain: 'Marketplace' as const,
+      providerCategory: 'SchoolCurriculum' as const,
+      concept: 'Year5Chemistry',
+      conditionType: 'UsedBook' as const,
+      description: '',
+    };
+
+    return {
+      status: overallStatus,
+      itemId: lastItemId,
+      matchedDemandId: lastMatchedDemandId,
+      extractedIntentsCount: extractedIntents.length,
+      extractedMetadata: primaryMetadata,
+      vectorChunksCount: totalVectorChunks,
+    };
+  }
+);
 export interface WhatsAppInboundPayload {
   media_id?: string;
   from_phone: string;
@@ -500,268 +767,7 @@ export interface WebhookProcessingResult {
 }
 
 
-/**
- * Core Orchestration Handler wrapping Lambda Durable Functions (`withDurableExecution`).
- */
-export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayload, WebhookProcessingResult>(
-  async (payload, context) => {
-    const reqId = payload.media_id || payload.message_text || `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-    // Lifecycle Event 1: Processing Started
-    await context.step(`emit-processing-started-${reqId}`, async () => {
-      return emitLifecycleEvent('ProcessingStarted', {
-        fromPhone: payload.from_phone,
-        mediaId: payload.media_id,
-      });
-    });
-
-    // Step 1: Media Retrieval from Meta Graph API
-    const mediaData = await context.step(`fetch-media-${reqId}`, async () => {
-      if (payload.media_id) {
-        const token = await whatsappTokenSetting.get();
-        return {
-          mediaId: payload.media_id,
-          url: `https://graph.facebook.com/v19.0/${payload.media_id}?access_token=${token}`,
-          mimeType: 'image/jpeg',
-          byteSize: 1024 * 45,
-        };
-      }
-      return { textOnly: payload.message_text || 'No media provided' };
-    });
-
-    // Step 2: Vision & Text Extraction via Amazon Bedrock (Amazon Nova Lite / Pro)
-    const extractedIntents = await context.step(`bedrock-vision-extraction-${reqId}`, async () => {
-      const textToAnalyze = payload.message_text || 'Year 5 Chemistry Book in excellent condition';
-      return await parseParentMessageIntentsWithLLM(textToAnalyze);
-    });
-
-    // Lifecycle Event 2: Extraction Complete
-    await context.step(`emit-extraction-complete-${reqId}`, async () => {
-      return emitLifecycleEvent('ExtractionComplete', {
-        intentsCount: extractedIntents.length,
-        intents: extractedIntents,
-      });
-    });
-
-    if (extractedIntents[0]?.intent === 'greeting' || extractedIntents[0]?.intent === 'spam') {
-      const lang = extractedIntents[0].lang || 'en';
-      const replyMsg = extractedIntents[0].replyMessage || await generateLLMMessage('greeting', { lang });
-      await sendWhatsAppTextMessage(payload.from_phone, replyMsg);
-      return {
-        status: extractedIntents[0].intent as 'greeting' | 'spam',
-        replyMessage: replyMsg,
-        extractedIntentsCount: 1,
-        vectorChunksCount: 0,
-      };
-    }
-
-    let overallStatus: 'processed' | 'matched' | 'added_to_inventory' | 'greeting' | 'spam' = 'processed';
-
-    let lastItemId: string | undefined;
-    let lastMatchedDemandId: string | undefined;
-    let totalVectorChunks = 0;
-
-    // Step 3 & 4: Iterate over each extracted item in the message
-    for (let idx = 0; idx < extractedIntents.length; idx++) {
-      const item = extractedIntents[idx];
-
-      if (item.intent === 'catalog') {
-        await context.step(`process-catalog-${reqId}-${idx}`, async () => {
-          const allInventory = await Array.fromAsync(activeInventory.scan());
-          const activeBooks = allInventory.filter(i => i.status === 'active');
-          
-          if (activeBooks.length === 0) {
-            const emptyMsg = await generateLLMMessage('catalog_empty', { lang: item.lang });
-            await sendWhatsAppTextMessage(payload.from_phone, emptyMsg);
-          } else {
-            const catalogMessage = buildGroupedCatalogText(activeBooks, item.lang);
-            await sendWhatsAppTextMessage(
-              payload.from_phone,
-              catalogMessage
-            );
-          }
-          return true;
-        });
-        continue;
-      } else if (item.intent === 'demand_board') {
-        await context.step(`process-demand-board-${reqId}-${idx}`, async () => {
-          const allDemands = await Array.fromAsync(demandBoard.scan());
-          const openDemands = allDemands.filter(d => d.status === 'pending');
-          
-          if (openDemands.length === 0) {
-            const emptyMsg = await generateLLMMessage('demand_board_empty', { lang: item.lang });
-            await sendWhatsAppTextMessage(payload.from_phone, emptyMsg);
-          } else {
-            const uniqueRequests = Array.from(new Set(openDemands.map(d => d.requestedQuery)));
-            const demandsText = uniqueRequests.map(t => `- ${t}`).join('\n');
-            const header = item.lang === 'fr'
-              ? "Voici les livres recherchés par la communauté :"
-              : "Here are the books parents in the community are currently looking for:";
-            await sendWhatsAppTextMessage(
-              payload.from_phone,
-              `${header}\n\n${demandsText}`
-            );
-          }
-          return true;
-        });
-        continue;
-      } else if (item.intent === 'demand') {
-        // Process Demand (Wishlist entry)
-        await context.step(`process-demand-${reqId}-${idx}-${item.concept}`, async () => {
-          // Check if item is already in ActiveInventory
-          const inventoryMatches = await Array.fromAsync(
-            activeInventory.query({
-              index: 'byConcept',
-              where: { concept: { equals: item.concept } },
-            })
-          );
-          const activeMatch = inventoryMatches.find(i => i.status === 'active');
-
-          const demandId = `demand_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-          const demandEntry: DemandItem = {
-            demandId,
-            userPhone: payload.from_phone,
-            requestedQuery: item.title,
-            concept: item.concept,
-            domain: item.domain,
-            status: activeMatch ? 'matched' : 'pending',
-            createdAt: Date.now(),
-          };
-
-          await demandBoard.put(demandEntry);
-
-          if (activeMatch) {
-            emitLifecycleEvent('MatchFound', {
-              demandId,
-              userPhone: payload.from_phone,
-              matchedConcept: item.concept,
-              matchedItemId: activeMatch.itemId,
-            });
-            overallStatus = 'matched';
-            lastMatchedDemandId = demandId;
-            const buyerMsg = await generateLLMMessage('match_buyer', { title: item.title, phone: activeMatch.sellerPhone, lang: item.lang });
-            const sellerMsg = await generateLLMMessage('match_seller', { title: item.title, phone: payload.from_phone, lang: 'en' });
-            await sendWhatsAppTextMessage(payload.from_phone, buyerMsg);
-            await sendWhatsAppTextMessage(activeMatch.sellerPhone, sellerMsg);
-          } else {
-            const postedMsg = await generateLLMMessage('demand_posted', { title: item.title, lang: item.lang });
-            await sendWhatsAppTextMessage(payload.from_phone, postedMsg);
-          }
-
-          return demandId;
-        });
-      } else {
-        // Process Offer (Inventory listing)
-        const matchResult = await context.step(`query-demand-board-matching-${reqId}-${idx}-${item.concept}`, async () => {
-          const allDemands = await Array.fromAsync(demandBoard.scan());
-          const targetConcept = normalizeConceptKey(item.concept);
-          const openDemand = allDemands.find(d => normalizeConceptKey(d.concept) === targetConcept && d.status === 'pending');
-
-          if (openDemand) {
-            await demandBoard.put({
-              ...openDemand,
-              status: 'matched',
-            });
-
-            emitLifecycleEvent('MatchFound', {
-              demandId: openDemand.demandId,
-              userPhone: openDemand.userPhone,
-              matchedConcept: item.concept,
-            });
-            return { matched: true, demand: openDemand };
-          }
-
-          return { matched: false };
-        });
-
-        if (matchResult.matched) {
-          overallStatus = 'matched';
-          lastMatchedDemandId = matchResult.demand?.demandId;
-          const openDemand = matchResult.demand!;
-          const sellerMsg = await generateLLMMessage('match_buyer', { title: item.title, phone: openDemand.userPhone, lang: item.lang });
-          const buyerMsg = await generateLLMMessage('match_seller', { title: item.title, phone: payload.from_phone, lang: 'en' });
-          await sendWhatsAppTextMessage(payload.from_phone, sellerMsg);
-          await sendWhatsAppTextMessage(openDemand.userPhone, buyerMsg);
-        } else {
-          // No match -> Add to ActiveInventory
-          const itemId = await context.step(`publish-active-inventory-${reqId}-${idx}-${item.concept}`, async () => {
-            const id = `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-            const newItem: ActiveInventoryItem = {
-              itemId: id,
-              title: item.title,
-              domain: item.domain,
-              providerCategory: item.providerCategory,
-              concept: item.concept,
-              conditionType: item.conditionType,
-              description: item.description,
-              sellerPhone: payload.from_phone,
-              status: 'active',
-              createdAt: Date.now(),
-            };
-
-            await activeInventory.put(newItem);
-
-            emitLifecycleEvent('InventoryAdded', {
-              itemId: id,
-              concept: item.concept,
-            });
-
-            const activeMsg = await generateLLMMessage('listing_active', { title: item.title, lang: item.lang });
-            await sendWhatsAppTextMessage(payload.from_phone, activeMsg);
-
-            return id;
-          });
-
-          if (overallStatus !== 'matched') {
-            overallStatus = 'added_to_inventory';
-          }
-          lastItemId = itemId;
-        }
-
-
-
-        // S3 Vector Chunking (<2KB limit)
-        const chunksCount = await context.step(`s3-vector-chunking-${reqId}-${idx}-${item.concept}`, async () => {
-          const chunks = chunkTextForVectorStore(item.description, 2048);
-          const metadata: S3VectorMetadata = {
-            Domain: item.domain,
-            Provider_Category: item.providerCategory,
-            Concept: item.concept,
-            Condition_Type: item.conditionType,
-          };
-
-          emitLifecycleEvent('S3VectorIngested', {
-            chunksCount: chunks.length,
-            maxChunkBytes: 2048,
-            metadata,
-          });
-
-          return chunks.length;
-        });
-
-        totalVectorChunks += chunksCount;
-      }
-    }
-
-    const primaryMetadata = extractedIntents[0] || {
-      title: 'Item',
-      domain: 'Marketplace' as const,
-      providerCategory: 'SchoolCurriculum' as const,
-      concept: 'Year5Chemistry',
-      conditionType: 'UsedBook' as const,
-      description: '',
-    };
-
-    return {
-      status: overallStatus,
-      itemId: lastItemId,
-      matchedDemandId: lastMatchedDemandId,
-      extractedIntentsCount: extractedIntents.length,
-      extractedMetadata: primaryMetadata,
-      vectorChunksCount: totalVectorChunks,
-    };
-  }
-);
 
 
 // ─── 5. API Gateway Webhook & Management Endpoints ─────────────────────────────
