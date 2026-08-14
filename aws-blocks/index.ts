@@ -845,14 +845,19 @@ Categories of intent:
 
 User Message: "${sanitizedText.replace(/"/g, '\\"')}"
 
+Rules for fields:
+- "title": MUST be a clear book title (e.g. "Books for Year 7", "Year 5 Chemistry Textbook", "Livres pour l'Année 6"). NEVER output placeholder strings like "Books for Year <N> <Subject>" or "Year N".
+- "concept": MUST be in format "Year<Number><SubjectOrBooks>" (e.g. "Year7Books", "Year5Chemistry", "Year12Mathematics", "GeneralScience"). Never output literal "<N>".
+- If no year is specified by the parent (e.g. "Looking for chemistry"), infer the closest subject or use "GeneralChemistry" / "GeneralBooks".
+
 Extract all intents from the message into JSON:
 {
   "intents": [
     {
       "intent": "offer" | "demand" | "catalog" | "demand_board" | "greeting",
       "lang": "en" | "fr",
-      "concept": "Year<N><SubjectOrBooks>" (e.g. "Year6Books", "Year5Chemistry", "Year12Mathematics"),
-      "title": "Books for Year <N> <Subject>",
+      "concept": "Year7Books" | "Year5Chemistry" | "Year12Mathematics",
+      "title": "Books for Year 7" | "Year 5 Chemistry Textbook",
       "domain": "Science" | "Languages" | "Mathematics" | "Arts" | "Humanities",
       "providerCategory": "PrimarySchool" | "MiddleSchool" | "HighSchool",
       "conditionType": "Good" | "LikeNew" | "Fair" | "New",
@@ -919,9 +924,10 @@ Respond ONLY with valid JSON inside a \`\`\`json block.`;
           item.conditionType = (CONDITION_TYPES as readonly string[]).includes(item.conditionType)
             ? item.conditionType
             : 'Good';
-          if (typeof item.concept === 'string') {
-            item.concept = normalizeConceptKey(item.concept);
-          }
+          
+          item.concept = normalizeConceptKey(item.concept || '', text);
+          item.title = sanitizeExtractedTitle(item.title || '', text, item.concept, item.lang || 'en');
+          
           return item;
         });
       }
@@ -931,22 +937,61 @@ Respond ONLY with valid JSON inside a \`\`\`json block.`;
   });
 }
 
-export function normalizeConceptKey(rawConcept: string): string {
-  if (!rawConcept) return 'Year5Chemistry';
-  const clean = rawConcept.replace(/\s+/g, '');
-  const yearMatch = clean.match(/(?:Year|Année)\s*(\d{1,2})/i);
-  if (!yearMatch) return clean;
-  const num = yearMatch[1];
-  const lower = clean.toLowerCase();
+/**
+ * Sanitizes and auto-corrects titles to ensure no literal placeholder tokens (e.g. "<N>", "Year N", "<Subject>")
+ * appear in the Demand Board or Active Inventory.
+ */
+export function sanitizeExtractedTitle(
+  rawTitle: string,
+  rawText: string,
+  concept: string,
+  lang: 'en' | 'fr' = 'en'
+): string {
+  let title = (rawTitle || '').trim();
 
-  if (lower.includes('chemistry') || lower.includes('chimie')) return `Year${num}Chemistry`;
-  if (lower.includes('science')) return `Year${num}Science`;
-  if (lower.includes('english') || lower.includes('anglais')) return `Year${num}English`;
-  if (lower.includes('math')) return `Year${num}Mathematics`;
-  if (lower.includes('computer') || lower.includes('coding')) return `Year${num}ComputerScience`;
-  if (lower.includes('global')) return `Year${num}GlobalPerspectives`;
+  // Detect and fix literal placeholder artifacts from LLM templates
+  if (/<\s*N\s*>|\bYear\s+N\b|<\s*Subject\s*>|\[\s*Subject\s*\]/i.test(title) || !title) {
+    // Extract year from user text or concept
+    const yearMatch = rawText.match(/(?:Year|Année|Grade|Classe(?:\s+de)?)\s*(\d{1,2})/i) || concept.match(/Year(\d{1,2})/i);
+    const subjectMatch = rawText.match(/\b(chemistry|chimie|physics|physique|math(?:ematics|s)?|mathématiques?|biology|biologie|english|anglais|science|computer|french|français|history|histoire|geography|géographie)\b/i);
 
-  return `Year${num}Books`;
+    const yearNum = yearMatch ? yearMatch[1] : '';
+    const subjectName = subjectMatch ? cleanSubjectName(subjectMatch[1], lang) : '';
+
+    if (yearNum && subjectName) {
+      title = lang === 'fr' ? `Livres Année ${yearNum} ${subjectName}` : `Books for Year ${yearNum} ${subjectName}`;
+    } else if (yearNum) {
+      title = lang === 'fr' ? `Livres pour l'Année ${yearNum}` : `Books for Year ${yearNum}`;
+    } else if (subjectName) {
+      title = lang === 'fr' ? `Livres de ${subjectName}` : `${subjectName} Books`;
+    } else {
+      title = lang === 'fr' ? 'Livres Scolaires Généraux' : 'General School Books';
+    }
+  }
+
+  // Remove any stray angle brackets
+  title = title.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+  return title;
+}
+
+export function normalizeConceptKey(rawConcept: string, fallbackText: string = ''): string {
+  const clean = (rawConcept || '').replace(/<[^>]+>/g, '').replace(/\s+/g, '');
+  const yearMatch = clean.match(/(?:Year|Année)\s*(\d{1,2})/i) || fallbackText.match(/(?:Year|Année|Grade)\s*(\d{1,2})/i);
+  
+  const num = yearMatch ? yearMatch[1] : '';
+  const lower = (clean + ' ' + fallbackText).toLowerCase();
+
+  const prefix = num ? `Year${num}` : 'General';
+
+  if (lower.includes('chemistry') || lower.includes('chimie')) return `${prefix}Chemistry`;
+  if (lower.includes('science')) return `${prefix}Science`;
+  if (lower.includes('english') || lower.includes('anglais')) return `${prefix}English`;
+  if (lower.includes('math')) return `${prefix}Mathematics`;
+  if (lower.includes('physics') || lower.includes('physique')) return `${prefix}Physics`;
+  if (lower.includes('computer') || lower.includes('coding')) return `${prefix}ComputerScience`;
+  if (lower.includes('global')) return `${prefix}GlobalPerspectives`;
+
+  return `${prefix}Books`;
 }
 
 function cleanSubjectName(rawSubject: string, lang: 'en' | 'fr'): string {

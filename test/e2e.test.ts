@@ -253,3 +253,18 @@ test('governance: system exposes enterprise security and observability status', 
   assert.strictEqual(status.distributedTracingActive, true);
   assert.strictEqual(status.emfMetricNamespace, 'BooksApp/WhatsAppMarketplace');
 });
+
+// ─── 10. Placeholder Sanitization & Title Auto-Correction ─────────────────────
+
+test('parsing: automatically sanitizes Year N placeholders and infers correct subject title', async () => {
+  const res = await api.handleWebhook({
+    from_phone: '+15554443322',
+    message_text: 'I have Year 8 Science and Year 10 Physics textbooks',
+  });
+
+  assert.strictEqual(res.success, true);
+  const inventory = await api.listInventory('Year8Science');
+  assert.ok(inventory.length >= 1);
+  assert.ok(!inventory.some(i => i.title.includes('<N>') || i.title.includes('Year N')), 'Title must not contain placeholder tokens');
+});
+
