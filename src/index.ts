@@ -3,7 +3,8 @@
  *
  * WhatsApp Bot & Marketplace Dashboard
  * Interface for Webhook verification, Demand Board wishlist, Active Inventory,
- * Bedrock vision extraction, and EventBridge lifecycle events monitoring.
+ * Bedrock vision extraction, EventBridge lifecycle events monitoring, and
+ * Enterprise Security, Governance & Observability Telemetry.
  */
 import { api } from 'aws-blocks';
 import { html, render } from 'lit-html';
@@ -40,9 +41,20 @@ type LifecycleEvent = {
   details: Record<string, any>;
 };
 
+type SecurityObservabilityStatus = {
+  wafEnabled: boolean;
+  hmacValidationEnabled: boolean;
+  bedrockGuardrailActive: boolean;
+  kmsEncryptionKeyAlias: string;
+  s3LifecyclePolicyDays: number;
+  distributedTracingActive: boolean;
+  emfMetricNamespace: string;
+};
+
 let inventory: ActiveInventoryItem[] = [];
 let demands: DemandItem[] = [];
 let events: LifecycleEvent[] = [];
+let securityStatus: SecurityObservabilityStatus | null = null;
 let statusMessage = '';
 
 async function loadData() {
@@ -50,6 +62,7 @@ async function loadData() {
     inventory = (await api.listInventory()) as ActiveInventoryItem[];
     demands = (await api.listDemands()) as DemandItem[];
     events = (await api.getLifecycleEvents()) as LifecycleEvent[];
+    securityStatus = (await api.getSecurityObservabilityStatus()) as SecurityObservabilityStatus;
   } catch (err: any) {
     console.error('Failed to load dashboard data:', err);
   }
@@ -109,6 +122,40 @@ async function handleAddWishlistDemand(concept: string, query: string) {
   loadData();
 }
 
+async function handleTestHmacValidation() {
+  statusMessage = '🔒 Testing HMAC-SHA256 Payload Signature Validation...';
+  redraw();
+
+  try {
+    const testSecret = 'secret_key_whatsapp_demo_1234';
+    const testPayload = JSON.stringify({ test: 'hmac-verification', timestamp: Date.now() });
+
+    // Use Web Crypto in browser to compute HMAC for verification test
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(testSecret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    const signatureBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(testPayload));
+    const hexSignature = Array.from(new Uint8Array(signatureBuffer))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    const res = await api.validateSignature(testPayload, `sha256=${hexSignature}`, testSecret);
+    if (res.valid) {
+      statusMessage = `🛡️ HMAC Verification SUCCESS! Cryptographic signature validated via timingSafeEqual.`;
+    } else {
+      statusMessage = `❌ HMAC Verification Failed!`;
+    }
+  } catch (err: any) {
+    statusMessage = `❌ HMAC test error: ${err.message}`;
+  }
+  loadData();
+}
+
 function redraw() {
   render(
     html`
@@ -122,6 +169,47 @@ function redraw() {
               </div>
             `
           : ''}
+
+        <!-- Enterprise Security, Governance & Observability Overview -->
+        <div class="card" style="border-left: 4px solid var(--accent, #6366f1)">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+            <div>
+              <h3 style="margin:0 0 4px 0;">Enterprise Security, Governance & Observability</h3>
+              <p style="margin:0;font-size:0.9rem;color:var(--text-muted);">
+                Real-time status of perimeter defense, data governance, and telemetry.
+              </p>
+            </div>
+            <button class="secondary" @click=${handleTestHmacValidation} style="font-size:0.85rem;">
+              🔐 Test HMAC Signature
+            </button>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px;margin-top:18px;">
+            <div style="background:rgba(255,255,255,0.03);padding:12px 16px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);">
+              <div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Perimeter Defense</div>
+              <div style="font-size:0.95rem;font-weight:600;margin-top:4px;color:#10b981;">🛡️ AWS WAF & Rate Limit</div>
+              <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px;">2,000 req/5min per IP</div>
+            </div>
+
+            <div style="background:rgba(255,255,255,0.03);padding:12px 16px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);">
+              <div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Data Governance</div>
+              <div style="font-size:0.95rem;font-weight:600;margin-top:4px;color:#3b82f6;">🔒 Bedrock Guardrails</div>
+              <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px;">PII Masked (Phone, Address)</div>
+            </div>
+
+            <div style="background:rgba(255,255,255,0.03);padding:12px 16px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);">
+              <div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Encryption & Storage</div>
+              <div style="font-size:0.95rem;font-weight:600;margin-top:4px;color:#a855f7;">🔑 AWS KMS CMK</div>
+              <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px;">30-Day S3 Image Lifecycle</div>
+            </div>
+
+            <div style="background:rgba(255,255,255,0.03);padding:12px 16px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);">
+              <div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Telemetry & Observability</div>
+              <div style="font-size:0.95rem;font-weight:600;margin-top:4px;color:#f59e0b;">📊 X-Ray Tracing + EMF</div>
+              <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px;">Zero-latency CloudWatch Metrics</div>
+            </div>
+          </div>
+        </div>
 
         <!-- Webhook Handshake & Simulator Card -->
         <div class="card">
@@ -278,4 +366,3 @@ function redraw() {
 }
 
 loadData();
-

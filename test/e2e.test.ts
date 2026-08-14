@@ -8,16 +8,21 @@
  * 4. Active Inventory creation when no match is found.
  * 5. 2KB S3 Vector chunking enforcement and metadata filter schema.
  * 6. EventBridge lifecycle events emission.
+ * 7. Real Parent Group Chat Message Parsing & Multi-Intent.
+ * 8. Multi-Photo Ingestion & Seller Catalog Building.
+ * 9. Greetings & Spam Filtering.
+ * 10. Cryptographic HMAC-SHA256 Payload Signature Verification.
+ * 11. Security, Governance & Observability Status & PII Protection.
  */
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout } from 'node:timers/promises';
+import * as crypto from 'node:crypto';
 import { installCookieJar, isServerRunning } from '@aws-blocks/blocks/utils';
 import type { api as ApiType } from 'aws-blocks';
 
 installCookieJar();
-
 
 let server: ChildProcess | null = null;
 let api: typeof ApiType;
@@ -100,7 +105,6 @@ test('inventory: unmatched item is saved to ActiveInventory', async () => {
     message_text: 'I have Year 12 Computer Science Book',
   });
 
-
   assert.strictEqual(webhookRes.success, true);
   assert.strictEqual(webhookRes.result.status, 'added_to_inventory');
   assert.ok(webhookRes.result.itemId);
@@ -124,7 +128,6 @@ test('vectors: chunking enforces strict 2KB limit', async () => {
     assert.ok(encoder.encode(chunk).byteLength <= 2048, 'Chunk size must be <= 2048 bytes');
   }
 });
-
 
 // ─── 4. EventBridge Lifecycle Events Emission ─────────────────────────────────
 
@@ -218,6 +221,35 @@ test('greetings & spam: filters chit-chat and responds with helpful guidance', a
   }
 });
 
+// ─── 8. Cryptographic HMAC-SHA256 Payload Signature Verification ─────────────
 
+test('security: HMAC-SHA256 signature validation accepts genuine Meta payloads', async () => {
+  const testSecret = 'secret_key_whatsapp_test_9988';
+  const rawPayload = JSON.stringify({
+    entry: [{ changes: [{ value: { messages: [{ from: '+15550001111', text: { body: 'Hello' } }] } }] }],
+  });
 
+  const expectedDigest = crypto.createHmac('sha256', testSecret).update(rawPayload, 'utf8').digest('hex');
+  const validHeader = `sha256=${expectedDigest}`;
 
+  const validResult = await api.validateSignature(rawPayload, validHeader, testSecret);
+  assert.strictEqual(validResult.valid, true, 'Genuine HMAC signature must be accepted');
+
+  const tamperedHeader = `sha256=${'0'.repeat(64)}`;
+  const tamperedResult = await api.validateSignature(rawPayload, tamperedHeader, testSecret);
+  assert.strictEqual(tamperedResult.valid, false, 'Tampered signature must be rejected');
+
+  const missingHeaderResult = await api.validateSignature(rawPayload, undefined, testSecret);
+  assert.strictEqual(missingHeaderResult.valid, false, 'Missing signature header must be rejected when secret is configured');
+});
+
+// ─── 9. Security, Governance & Observability Status ──────────────────────────
+
+test('governance: system exposes enterprise security and observability status', async () => {
+  const status = await api.getSecurityObservabilityStatus();
+  assert.strictEqual(status.wafEnabled, true);
+  assert.strictEqual(status.kmsEncryptionKeyAlias, 'alias/books-block-app-cmk');
+  assert.strictEqual(status.s3LifecyclePolicyDays, 30);
+  assert.strictEqual(status.distributedTracingActive, true);
+  assert.strictEqual(status.emfMetricNamespace, 'BooksApp/WhatsAppMarketplace');
+});
