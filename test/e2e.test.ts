@@ -268,3 +268,19 @@ test('parsing: automatically sanitizes Year N placeholders and infers correct su
   assert.ok(!inventory.some(i => i.title.includes('<N>') || i.title.includes('Year N')), 'Title must not contain placeholder tokens');
 });
 
+// ─── 11. Interactive School Year Validation & Clarification ──────────────────
+
+test('conversational clarification: prompts parent to specify school year when year is omitted in request', async () => {
+  // Parent sends an offer without specifying any school year
+  const res = await api.handleWebhook({
+    from_phone: '+15553332211',
+    message_text: 'I have Chemistry and Physics books available for anyone who wants them',
+  });
+
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.result.status, 'needs_year_clarification');
+  assert.ok(typeof res.result.replyMessage === 'string' && res.result.replyMessage.length > 0);
+  assert.ok(/year|année|grade|classe/i.test(res.result.replyMessage!), 'Reply message must ask for school year clarification');
+});
+
+

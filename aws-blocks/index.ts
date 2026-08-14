@@ -469,7 +469,30 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         };
       }
 
-      let overallStatus: 'processed' | 'matched' | 'added_to_inventory' | 'greeting' | 'spam' = 'processed';
+      // Conversational Year Validation: If parent offers or seeks a book with NO school year specified
+      const firstOfferOrDemand = extractedIntents.find(i => i.intent === 'offer' || i.intent === 'demand');
+      if (firstOfferOrDemand && !hasExplicitSchoolYear(firstOfferOrDemand.concept, payload.message_text || '')) {
+        const lang = firstOfferOrDemand.lang || 'en';
+        const clarificationMsg = await generateLLMMessage('year_clarification', {
+          title: firstOfferOrDemand.title,
+          subject: firstOfferOrDemand.domain,
+          lang,
+        });
+        await sendWhatsAppTextMessage(payload.from_phone, clarificationMsg);
+        metrics.emit('YearClarificationRequested', 1, { unit: 'Count', dimensions: { domain: firstOfferOrDemand.domain } });
+
+        const duration = Date.now() - startTime;
+        metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'needs_year_clarification' } });
+
+        return {
+          status: 'needs_year_clarification',
+          replyMessage: clarificationMsg,
+          extractedIntentsCount: 1,
+          vectorChunksCount: 0,
+        };
+      }
+
+      let overallStatus: 'processed' | 'matched' | 'added_to_inventory' | 'greeting' | 'spam' | 'needs_year_clarification' = 'processed';
       let lastItemId: string | undefined;
       let lastMatchedDemandId: string | undefined;
       let totalVectorChunks = 0;
@@ -733,8 +756,16 @@ export interface ExtractedIntentItem {
  * Anonymizes any in-prompt PII and instruments Bedrock latency & token telemetry via EMF.
  */
 export async function generateLLMMessage(
-  scenario: 'greeting' | 'catalog_empty' | 'demand_board_empty' | 'match_buyer' | 'match_seller' | 'demand_posted' | 'listing_active',
-  params: { title?: string; phone?: string; lang?: 'en' | 'fr' }
+  scenario:
+    | 'greeting'
+    | 'catalog_empty'
+    | 'demand_board_empty'
+    | 'match_buyer'
+    | 'match_seller'
+    | 'demand_posted'
+    | 'listing_active'
+    | 'year_clarification',
+  params: { title?: string; phone?: string; lang?: 'en' | 'fr'; subject?: string }
 ): Promise<string> {
   return await tracer.startSegment('bedrock_generate_llm_message', async (segment) => {
     const lang = params.lang || 'en';
@@ -753,6 +784,7 @@ Context Data: ${JSON.stringify(sanitizedParams)}
 Guidelines:
 - Include relevant emojis (📚, 👋, 🤝, 💡).
 - Keep it clear, polite, and direct for parents.
+- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent.
 - If phone is provided, instruct them to contact the matching parent.
 - Output ONLY the message text. Do NOT wrap in quotes or code blocks.`;
 
@@ -974,6 +1006,13 @@ export function sanitizeExtractedTitle(
   return title;
 }
 
+export function hasExplicitSchoolYear(concept: string, text: string): boolean {
+  if (/Year\d{1,2}/i.test(concept) && !concept.startsWith('General')) {
+    return true;
+  }
+  return /(?:Year|Année|Grade|Classe(?:\s+de)?)\s*\d{1,2}|\b(?:6[èe]me|5[èe]me|4[èe]me|3[èe]me|2nde|1[èe]re|Terminale|CP|CE1|CE2|CM1|CM2)\b/i.test(text);
+}
+
 export function normalizeConceptKey(rawConcept: string, fallbackText: string = ''): string {
   const clean = (rawConcept || '').replace(/<[^>]+>/g, '').replace(/\s+/g, '');
   const yearMatch = clean.match(/(?:Year|Année)\s*(\d{1,2})/i) || fallbackText.match(/(?:Year|Année|Grade)\s*(\d{1,2})/i);
@@ -1077,7 +1116,7 @@ export function buildGroupedCatalogText(activeBooks: ActiveInventoryItem[], lang
 }
 
 export interface WebhookProcessingResult {
-  status: 'processed' | 'matched' | 'added_to_inventory' | 'greeting' | 'spam';
+  status: 'processed' | 'matched' | 'added_to_inventory' | 'greeting' | 'spam' | 'needs_year_clarification';
   itemId?: string;
   matchedDemandId?: string;
   extractedIntentsCount?: number;
