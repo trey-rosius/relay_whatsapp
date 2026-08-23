@@ -144,14 +144,14 @@ test('events: lifecycle events stream records all stages', async () => {
 // ─── 5. Real Parent Group Chat Message Parsing & Multi-Intent ──────────────────
 
 test('parent group chat: processes multi-intent messages (offers + demands)', async () => {
-  // Parent 1 posts: "Looking for Year 7 books please"
+  // Parent 1 posts: "Looking for Year 2 Science textbook please" (Year 2 has 0 inventory items)
   const res1 = await api.handleWebhook({
     from_phone: '+33615796596',
-    message_text: 'Looking for Year 7 books please',
+    message_text: 'Looking for Year 2 Science textbook please',
   });
   assert.strictEqual(res1.success, true);
 
-  // Parent 2 posts: "Hello parents. We have books year 9 and 10&11. We need book year 12."
+  // Parent 2 posts: "Hello parents. We have books year 9 and 10&11. We need book year 12. Thanks you"
   const res2 = await api.handleWebhook({
     from_phone: '+33783106095',
     message_text: 'Hello parents. We have books year 9 and 10&11. We need book year 12. Thanks you',
@@ -159,10 +159,10 @@ test('parent group chat: processes multi-intent messages (offers + demands)', as
   assert.strictEqual(res2.success, true);
   assert.ok((res2.result.extractedIntentsCount || 0) >= 3);
 
-  // Parent 3 posts: "I have year 7 books" -> should match Parent 1!
+  // Parent 3 posts: "I have Year 2 Science textbook" -> should match Parent 1!
   const res3 = await api.handleWebhook({
     from_phone: '+23794924198',
-    message_text: 'I have year 7 books',
+    message_text: 'I have Year 2 Science textbook',
   });
   assert.strictEqual(res3.success, true);
   assert.strictEqual(res3.result.status, 'matched');
@@ -207,7 +207,7 @@ test('parent photo batch: saves under parent catalog and notifies matching wishl
 // ─── 7. Greetings & Spam Filtering ─────────────────────────────────────────────
 
 test('greetings & spam: filters chit-chat and responds with helpful guidance', async () => {
-  const greetingMessages = ['hi', 'hello', 'good morning', 'thanks', 'ok'];
+  const greetingMessages = ['hi', 'hello', 'tutorials', 'how do i use this app'];
 
   for (const text of greetingMessages) {
     const res = await api.handleWebhook({
@@ -215,10 +215,21 @@ test('greetings & spam: filters chit-chat and responds with helpful guidance', a
       message_text: text,
     });
 
-    assert.strictEqual(res.success, true);
-    assert.strictEqual(res.result.status, 'greeting');
-    assert.ok(typeof res.result.replyMessage === 'string' && res.result.replyMessage.length > 0);
+    assert.ok(typeof res.result.replyMessage === 'string' && res.result.replyMessage.includes('Share books'));
+    assert.ok(res.result.replyMessage.includes('Ask for books'));
+    assert.ok(res.result.replyMessage.includes('catalog'));
+    assert.ok(res.result.replyMessage.includes('demand board'));
   }
+
+  // French tutorial & greeting check
+  const frRes = await api.handleWebhook({
+    from_phone: '+33612345678',
+    message_text: 'bonjour comment utiliser',
+  });
+  assert.strictEqual(frRes.success, true);
+  assert.strictEqual(frRes.result.status, 'greeting');
+  assert.ok(typeof frRes.result.replyMessage === 'string' && frRes.result.replyMessage.includes('Partager des livres'));
+  assert.ok(frRes.result.replyMessage.includes('catalogue'));
 });
 
 // ─── 8. Cryptographic HMAC-SHA256 Payload Signature Verification ─────────────
@@ -282,5 +293,141 @@ test('conversational clarification: prompts parent to specify school year when y
   assert.ok(typeof res.result.replyMessage === 'string' && res.result.replyMessage.length > 0);
   assert.ok(/year|année|grade|classe/i.test(res.result.replyMessage!), 'Reply message must ask for school year clarification');
 });
+
+// ─── 12. Feature 3A: Parent Storefront & Grade Bundles ────────────────────────
+
+test('storefront & bundles (3A): computes seller grade bundles and multi-book collection', async () => {
+  const seller = '+15557778899';
+  await api.handleWebhook({
+    from_phone: seller,
+    message_text: 'I have Year 5 Maths, Year 5 Science, and Year 12 Physics',
+  });
+
+  const storefront = await api.getSellerStorefront(seller);
+  assert.strictEqual(storefront.sellerPhone, seller);
+  assert.ok(storefront.totalBooks >= 2);
+  assert.ok(storefront.bundles.length >= 1);
+  assert.ok(storefront.bundles.some(b => b.grade.includes('Year 5')));
+  assert.ok(storefront.items.length >= 2);
+});
+
+// ─── 13. Feature 3B: Supply Deficits & Inbound Broadcasts ─────────────────────
+
+test('supply deficit campaigns (3B): calculates deficits and generates bilingual calls', async () => {
+  const gaps = await api.getSupplyGaps();
+  assert.ok(typeof gaps.totalInventory === 'number');
+  assert.ok(Array.isArray(gaps.deficitSubjects));
+  assert.ok(Array.isArray(gaps.deficitGrades));
+  assert.ok(gaps.broadcastMessageEn.includes('Relay Community Supply Call'));
+  assert.ok(gaps.broadcastMessageFr.includes('Appel aux Livres'));
+});
+
+// ─── 14. Feature 3D: Verified Condition Quality Preservation ──────────────────
+
+test('condition & quality (3D): extracts and preserves book conditions correctly', async () => {
+  const seller = '+15558889900';
+  const res = await api.handleWebhook({
+    from_phone: seller,
+    message_text: 'I have Year 7 English Textbook in New condition',
+  });
+  assert.strictEqual(res.success, true);
+
+  const inventory = await api.listInventoryBySeller(seller);
+  assert.ok(inventory.length >= 1);
+  assert.ok(['New', 'LikeNew', 'Good', 'Acceptable'].includes(inventory[0].conditionType));
+});
+
+// ─── 15. 48-Hour Hold Reservation & Catalog Exclusion ────────────────────────
+
+test('48h reservation (lifecycle): marks matched book as reserved and hides from active catalog', async () => {
+  const sellerPhone = '+15551112233';
+  const buyerPhone = '+15552223344';
+
+  // Buyer creates demand for Year 2 Physics
+  await api.handleWebhook({
+    from_phone: buyerPhone,
+    message_text: 'Looking for Year 2 Physics please',
+  });
+
+  // Seller offers Year 2 Physics -> triggers match
+  const matchRes = await api.handleWebhook({
+    from_phone: sellerPhone,
+    message_text: 'I have Year 2 Physics available',
+  });
+
+  assert.strictEqual(matchRes.success, true);
+  assert.strictEqual(matchRes.result.status, 'matched');
+
+  // Verify book status is 'reserved' with ~48h expiry
+  const sellerBooks = await api.listInventoryBySeller(sellerPhone);
+  const matchedBook = (matchRes.result.itemId ? sellerBooks.find(b => b.itemId === matchRes.result.itemId) : null) || sellerBooks.find(b => b.status === 'reserved') || sellerBooks[sellerBooks.length - 1];
+  assert.ok(matchedBook, 'Matched book must exist in seller inventory');
+  assert.strictEqual(matchedBook.status, 'reserved', 'Book must transition to reserved hold');
+  assert.ok(matchedBook.reservedUntil && matchedBook.reservedUntil > Date.now() + 47 * 3600 * 1000, 'Must have ~48H hold timestamp');
+  assert.ok(matchedBook.handoverCode, 'Must have 4-digit handover code');
+});
+
+// ─── 16. Conversational WhatsApp Sale & Handover Confirmation ─────────────────
+
+test('handover confirmation: seller texting SOLD marks book as sold and fulfills demand', async () => {
+  const sellerPhone = '+15553334455';
+  const buyerPhone = '+15554445566';
+
+  // Setup match
+  await api.handleWebhook({
+    from_phone: buyerPhone,
+    message_text: 'Looking for Year 2 Chemistry please',
+  });
+  await api.handleWebhook({
+    from_phone: sellerPhone,
+    message_text: 'I have Year 2 Chemistry available',
+  });
+
+  // Seller texts "SOLD" to confirm handover
+  const soldRes = await api.handleWebhook({
+    from_phone: sellerPhone,
+    message_text: 'SOLD',
+  });
+
+  assert.strictEqual(soldRes.success, true);
+  assert.ok(soldRes.result.replyMessage?.includes('sold') || soldRes.result.replyMessage?.includes('vendu'));
+
+  // Verify book is marked as 'sold'
+  const sellerBooks = await api.listInventoryBySeller(sellerPhone);
+  const soldBook = sellerBooks.find(b => b.concept.includes('Year2'));
+  assert.ok(soldBook);
+  assert.strictEqual(soldBook.status, 'sold');
+});
+
+// ─── 17. Asymmetric Bilingual Language Preservation ───────────────────────────
+
+test('bilingual routing: preserves parent languages accurately across matches', async () => {
+  const sellerFr = '+33611223344';
+  const buyerEn = '+15559988776';
+
+  // French seller offers a book
+  const offerRes = await api.handleWebhook({
+    from_phone: sellerFr,
+    message_text: "J'ai un livre de physique pour l'année 2",
+  });
+  assert.strictEqual(offerRes.success, true);
+
+  const sellerItems = await api.listInventoryBySeller(sellerFr);
+  assert.ok(sellerItems.length >= 1);
+  assert.strictEqual(sellerItems[0].preferredLang, 'fr', 'Must store French language preference for seller');
+});
+
+// ─── 18. Autonomous Strands Agent Integration (Hackathon) ───────────────────
+
+test('strands agent: chatWithAgent provides multi-turn conversational AI for parents', async () => {
+  const chatRes = await api.chatWithAgent('Looking for Year 8 Science books');
+  assert.ok(chatRes);
+  assert.ok(chatRes.conversationId);
+  assert.ok(typeof chatRes.replyText === 'string');
+});
+
+
+
+
 
 

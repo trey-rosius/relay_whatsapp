@@ -35,7 +35,7 @@ export const appKey = new kms.Key(blocksStack, 'AppEncryptionKey', {
   description: 'Customer Managed Key for Books Block App DynamoDB, S3, Secrets & Logs',
   enableKeyRotation: true,
   removalPolicy: sandboxMode ? cdk.RemovalPolicy.DESTROY : cdk.RemovalPolicy.RETAIN,
-  alias: 'alias/books-block-app-cmk',
+  alias: `alias/${stackName}-cmk`,
 });
 
 // Grant Lambda execute decrypt/encrypt permissions on KMS Key
@@ -64,7 +64,7 @@ blocksStack.handler.addEnvironment('WHATSAPP_SECRET_NAME', whatsappSecret.secret
 
 // ─── 3. Governance: Amazon Bedrock Guardrails for PII Redaction ──────────────
 export const bedrockGuardrail = new bedrock.CfnGuardrail(blocksStack, 'BedrockPiiGuardrail', {
-  name: `${stackName}-pii-guardrail`,
+  name: `${stackName.slice(0, 32)}-pii-guard`,
   description: 'Redacts and masks PII (phone numbers, addresses, parent names) before foundation model inference',
   kmsKeyArn: appKey.keyArn,
   sensitiveInformationPolicyConfig: {
@@ -94,18 +94,21 @@ export const bedrockGuardrailVersion = new bedrock.CfnGuardrailVersion(blocksSta
   guardrailIdentifier: bedrockGuardrail.attrGuardrailId,
   description: 'Version 1 for Bedrock PII Guardrail',
 });
+bedrockGuardrailVersion.addResourceDependency(bedrockGuardrail);
 
 blocksStack.handler.addEnvironment('BEDROCK_GUARDRAIL_ID', bedrockGuardrail.attrGuardrailId);
 blocksStack.handler.addEnvironment('BEDROCK_GUARDRAIL_VERSION', bedrockGuardrailVersion.attrVersion);
 
 // ─── 4. Security & Perimeter Defense: AWS WAFv2 WebACL ───────────────────────
+const cleanStackName = stackName.replace(/[^a-zA-Z0-9]/g, '');
+
 export const apiWaf = new wafv2.CfnWebACL(blocksStack, 'ApiGatewayWAF', {
-  name: `${stackName}-waf-acl`,
+  name: `${stackName.slice(0, 32)}-waf-acl`,
   scope: 'REGIONAL',
   defaultAction: { allow: {} },
   visibilityConfig: {
     cloudWatchMetricsEnabled: true,
-    metricName: `${stackName}-WAF-Metric`,
+    metricName: `${cleanStackName}WAFMetric`,
     sampledRequestsEnabled: true,
   },
   rules: [
@@ -122,7 +125,7 @@ export const apiWaf = new wafv2.CfnWebACL(blocksStack, 'ApiGatewayWAF', {
       },
       visibilityConfig: {
         cloudWatchMetricsEnabled: true,
-        metricName: `${stackName}-RateLimit-Blocked`,
+        metricName: `${cleanStackName}RateLimitBlocked`,
         sampledRequestsEnabled: true,
       },
     },
@@ -139,7 +142,7 @@ export const apiWaf = new wafv2.CfnWebACL(blocksStack, 'ApiGatewayWAF', {
       },
       visibilityConfig: {
         cloudWatchMetricsEnabled: true,
-        metricName: `${stackName}-IpReputationList-Metric`,
+        metricName: `${cleanStackName}IpReputationMetric`,
         sampledRequestsEnabled: true,
       },
     },
@@ -156,7 +159,7 @@ export const apiWaf = new wafv2.CfnWebACL(blocksStack, 'ApiGatewayWAF', {
       },
       visibilityConfig: {
         cloudWatchMetricsEnabled: true,
-        metricName: `${stackName}-CommonRuleSet-Metric`,
+        metricName: `${cleanStackName}CommonRuleSetMetric`,
         sampledRequestsEnabled: true,
       },
     },
@@ -173,18 +176,15 @@ export const apiWaf = new wafv2.CfnWebACL(blocksStack, 'ApiGatewayWAF', {
       },
       visibilityConfig: {
         cloudWatchMetricsEnabled: true,
-        metricName: `${stackName}-KnownBadInputs-Metric`,
+        metricName: `${cleanStackName}KnownBadInputsMetric`,
         sampledRequestsEnabled: true,
       },
     },
   ],
 });
 
-// Associate WAF WebACL to API Gateway Deployment Stage
-const stageArn = cdk.Stack.of(blocksStack).formatArn({
-  service: 'apigateway',
-  resource: `restapis/${blocksStack.gateway.restApiId}/stages/${blocksStack.gateway.deploymentStage.stageName}`,
-});
+// Associate WAF WebACL to API Gateway Deployment Stage (format required by AWS WAFv2: arn:aws:apigateway:region::/restapis/api-id/stages/stage-name)
+const stageArn = `arn:${cdk.Aws.PARTITION}:apigateway:${cdk.Aws.REGION}::/restapis/${blocksStack.gateway.restApiId}/stages/${blocksStack.gateway.deploymentStage.stageName}`;
 
 export const wafAssociation = new wafv2.CfnWebACLAssociation(blocksStack, 'ApiGatewayWAFAssociation', {
   resourceArn: stageArn,
@@ -204,8 +204,9 @@ blocksStack.handler.addToRolePolicy(
   new iam.PolicyStatement({
     actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream', 'bedrock:ApplyGuardrail'],
     resources: [
-      `arn:aws:bedrock:*::foundation-model/us.amazon.nova-lite-v1:0`,
-      `arn:aws:bedrock:*::foundation-model/us.amazon.nova-pro-v1:0`,
+      `arn:aws:bedrock:*::foundation-model/*`,
+      `arn:aws:bedrock:*:*:inference-profile/*`,
+      `arn:aws:bedrock:*:*:foundation-model/*`,
       bedrockGuardrail.attrGuardrailArn,
       `${bedrockGuardrail.attrGuardrailArn}/*`,
     ],

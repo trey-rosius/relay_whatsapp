@@ -1,60 +1,95 @@
-# AWS Blocks App
+# Relay 📚 — Autonomous School Book Marketplace & Matchmaker
+### Built with Strands Agents SDK & AWS Blocks for the *Agents for Humans Hackathon*
 
-Real-time todo app with authentication, per-user data isolation, and live sync across tabs.
+Relay is an autonomous AI agent operating in the background on WhatsApp and the web. It takes the heavy busywork and friction out of back-to-school textbook shopping by parsing parent messages & book photos, maintaining live community inventories, and autonomously matching buying parents to selling parents.
 
-## Getting Started
+---
 
-```bash
-npm run dev          # Start local dev server (mocks, no AWS needed)
-npm run test:e2e     # Run API tests
-npm run sandbox      # Deploy to AWS sandbox
+## 🌟 Hackathon Track & Problem Statement
+
+* **Competition:** [Agents for Humans Hackathon (Devpost)](https://agentsforhumans.devpost.com/)
+* **Target Track:** **Everyday Agents** / **Good Neighbor Agents**
+* **The Problem:** Every school year, parents spend hours hunting down specific curriculum books across group chats, comparing grades/editions, and coordinating pickups.
+* **The Agent Solution:** Instead of another app to manage, Relay runs autonomously in the background. Parents simply send a photo or natural language message on WhatsApp (e.g. *"I have Year 5 Maths and need Year 8 Physics"*). Relay automatically catalogs inventory, logs wishlist demands, executes matchmaker algorithms, and only reaches out when an exact match is confirmed.
+
+---
+
+## 🏗️ Architecture & Strands Agents Integration
+
+```
+                         Parent WhatsApp Message / Web Chat
+                                         │
+                 ┌───────────────────────┴───────────────────────┐
+                 ▼                                               ▼
+     [Deterministic Fast-Path]                       [Strands-Powered Agent Block]
+     - 'catalog', 'demandes'                         - Natural language multi-intent parsing
+     - Exact button responses                        - Cross-grade recommendation reasoning
+     - Sub-50ms DynamoDB reads                       - Autonomous tool calling loop
+                 │                                               │
+                 ▼                               ┌───────────────┴───────────────┐
+         Instant Response                        ▼               ▼               ▼
+                                          searchInventory   createDemand   registerBookOffer
+                                                 │               │               │
+                                                 └───────────────┬───────────────┘
+                                                                 │
+                                                                 ▼
+                                                  48-Hour Reserved Hold Lock
+                                                  & Automated WhatsApp Match Notification
 ```
 
-Open http://localhost:3000 after `npm run dev`.
+### Powered by:
+* **Strands Agents SDK (`@aws-blocks/bb-agent` / `Agent`):** Model-driven autonomous agent reasoning with type-safe Zod tools (`searchInventory`, `listDemands`, `createDemand`, `registerBookOffer`, `getSellerCatalog`).
+* **Amazon Bedrock (`BedrockModels.BALANCED`):** Claude 3.5/3.7 Sonnet inference for conversational understanding with in-prompt PII redaction.
+* **Amazon DynamoDB (`DistributedTable`):** High-throughput persistence for active inventory and demand boards with GSIs on `concept` and `createdAt`.
+* **Meta WhatsApp Cloud API (`RawRoute`):** HMAC-SHA256 signature verified webhooks with sub-second non-blocking response.
+* **AWS X-Ray (`Tracer`) & CloudWatch EMF (`Metrics`):** Enterprise distributed tracing and real-time operational telemetry.
 
-## Project Structure
+---
 
-| Path | Purpose |
-|------|---------|
-| `aws-blocks/index.ts` | Backend: auth, data model, API, real-time channels |
-| `src/index.ts` | Frontend: todo UI with live updates |
-| `test/e2e.test.ts` | Tests: auth, CRUD, conflicts, real-time |
-| `index.html` | HTML shell |
+## 🚀 Getting Started
 
-## What's Included
+### Prerequisites
+* Node.js >= 22.0.0
+* npm
 
-- **AuthBasic** — sign up / sign in / sign out with JWT sessions
-- **DistributedTable** — todos stored in DynamoDB with Zod schema validation
-- **Optimistic locking** — `version` field + `ifFieldEquals` prevents lost updates
-- **Realtime** — todo changes broadcast to all connected tabs via WebSocket
+### 1. Install Dependencies
+```bash
+npm install
+```
 
-## Commands
+### 2. Run Local Development Server
+```bash
+npm run dev
+```
+Starts the local dev server with full mock storage and local agent support at `http://localhost:3000`.
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Local dev with mock storage |
-| `npm run test:e2e` | Test API via direct imports |
-| `npm run typecheck` | TypeScript type checking |
-| `npm run sandbox` | Deploy backend to AWS, serve frontend locally |
-| `npm run deploy` | Full production deploy |
-| `npm run sandbox:destroy` | Tear down sandbox resources |
+### 3. Run Test Suites
+```bash
+# Run unit tests (prompts, PII redactions, invariants, agent tools)
+npm run test:unit
 
-## Building on this template
+# Run full end-to-end tests (webhooks, durable matchmaker, agent streaming)
+npm run test:e2e
 
-The test file (`test/e2e.test.ts`) is structured in sections — Auth, CRUD, Conflicts, Realtime. Add your own tests by copying a `test(...)` block and changing the assertion. The API methods in `aws-blocks/index.ts` follow a consistent pattern: authenticate → do work → broadcast.
+# Run all tests together
+npm run test
+```
 
-To replace the todo domain with your own: update the Zod schema, rename the API methods, and adjust the tests. The auth and real-time wiring stays the same.
+---
 
-## Stack naming
+## 📁 Repository Structure
 
-Your CloudFormation stack names are derived from the `stackId` in `.blocks/config.json` — generated at scaffold time from your project name plus a random suffix (e.g., `my-app-a3x9kf`). Production deploys as `<stackId>-prod` and sandbox as `<stackId>-<username>-<random>`, where the sandbox identifier is per-machine and stored in `.blocks-sandbox/sandbox-id.txt` (gitignored). This lets multiple developers share a testing account without colliding.
+| Path | Description |
+| :--- | :--- |
+| `aws-blocks/index.ts` | Backend core: Strands Agent definition, tools, DynamoDB models, webhook endpoints, and telemetry. |
+| `src/` | Frontend web interface for catalog exploration, seller storefronts, and live agent chat. |
+| `test/agent.unit.test.ts` | Unit tests for Strands Agent tools and schema validation. |
+| `test/prompts.unit.test.ts` | Invariant tests, golden SHA-256 prompt baselines, and PII masking tests. |
+| `test/e2e.test.ts` | End-to-end integration tests for WhatsApp webhooks, 48h holds, and agent flows. |
+| `architecture_backend.drawio` | Comprehensive system architecture and data flow diagram. |
 
-To change the stack name, edit `stackId` in `.blocks/config.json`. For dynamic naming logic, modify `aws-blocks/index.cdk.ts` directly.
+---
 
-## For Agents
+## 📜 License
 
-Full Building Block documentation: `node_modules/@aws-blocks/blocks/README.md`
-
-**Do not use local files or in-memory storage** — use Building Blocks for all data persistence and cloud abstractions (they mock locally and deploy to AWS automatically).
-
-Start in `aws-blocks/index.ts` (backend) and `src/index.ts` (frontend). Test via `npm run test:e2e`. The API transport (JSON-RPC) is auto-generated and intentionally invisible — do not curl endpoints directly. Testing is best done through the e2e tests which use the same typed client as the frontend.
+This project is licensed under the [MIT License](LICENSE).

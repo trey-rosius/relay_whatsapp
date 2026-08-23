@@ -22,6 +22,8 @@ import {
   Tracer,
   Metrics,
   FileBucket,
+  Agent,
+  BedrockModels,
 } from '@aws-blocks/blocks';
 import { z } from 'zod';
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
@@ -159,8 +161,8 @@ export function verifyMetaHmacSignature(rawBody: string, signatureHeader?: strin
 export function maskPromptPII(text: string): string {
   if (!text) return text;
   let sanitized = text;
-  // Anonymize phone numbers: e.g. +33615796596, +15550199001, 0612345678
-  sanitized = sanitized.replace(/(?:\+?\d{1,4}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}/g, '[PHONE_REDACTED]');
+  // Anonymize phone numbers: e.g. +33615796596, +15550199001, 0612345678, +237 6 51 56 53 40
+  sanitized = sanitized.replace(/(?:\+\d{1,4}[-.\s]*)?(?:\(?\d{1,4}\)?[-.\s]*)?\d{1,4}(?:[-.\s]?\d{2,4}){2,5}/g, '[PHONE_REDACTED]');
   // Anonymize emails
   sanitized = sanitized.replace(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g, '[EMAIL_REDACTED]');
   // Anonymize street address patterns
@@ -180,6 +182,9 @@ export async function sendWhatsAppTextMessage(toPhone: string, textBody: string)
       segment.addAnnotation('recipientPhoneMasked', toPhone.slice(-4));
       const startTime = Date.now();
 
+      const formattedTo = toPhone.replace(/[^0-9]/g, '');
+      console.log(`[WhatsAppOutbound] Dispatching message to: ${formattedTo} via phoneId: ${creds.phoneNumberId}`);
+
       const res = await fetch(`https://graph.facebook.com/v25.0/${creds.phoneNumberId}/messages`, {
         method: 'POST',
         headers: {
@@ -188,11 +193,19 @@ export async function sendWhatsAppTextMessage(toPhone: string, textBody: string)
         },
         body: JSON.stringify({
           messaging_product: 'whatsapp',
-          to: toPhone.replace(/\s+/g, '').replace('+', ''),
+          recipient_type: 'individual',
+          to: formattedTo,
           type: 'text',
-          text: { body: textBody },
+          text: { preview_url: false, body: textBody },
         }),
       });
+
+      const data = await res.json();
+      if (!res.ok) {
+        console.error('[WhatsAppOutboundError]', res.status, JSON.stringify(data));
+      } else {
+        console.log('[WhatsAppOutboundSuccess]', JSON.stringify(data));
+      }
 
       const latency = Date.now() - startTime;
       metrics.emit('WhatsAppDispatchLatency', latency, { unit: 'Milliseconds' });
@@ -202,7 +215,7 @@ export async function sendWhatsAppTextMessage(toPhone: string, textBody: string)
       }
 
       segment.setHttpStatus(res.status);
-      return await res.json();
+      return data;
     } catch (err) {
       segment.addError(err as Error);
       console.error('Failed to dispatch Meta WhatsApp outbound message:', err);
@@ -244,6 +257,13 @@ export const activeInventorySchema = z.object({
   description: z.string(),
   sellerPhone: z.string(),
   status: z.enum(['active', 'sold', 'reserved']),
+  preferredLang: z.enum(['en', 'fr']).optional().default('en'),
+  reservedUntil: z.number().optional(),
+  reservedForPhone: z.string().optional(),
+  matchedDemandId: z.string().optional(),
+  soldAt: z.number().optional(),
+  soldToPhone: z.string().optional(),
+  handoverCode: z.string().optional(),
   createdAt: z.number(),
 });
 
@@ -263,7 +283,11 @@ export const demandBoardSchema = z.object({
   requestedQuery: z.string(),
   concept: z.string(),
   domain: z.string(),
-  status: z.enum(['pending', 'matched', 'cancelled']),
+  status: z.enum(['pending', 'matched', 'fulfilled', 'cancelled']),
+  preferredLang: z.enum(['en', 'fr']).optional().default('en'),
+  matchedItemId: z.string().optional(),
+  matchedAt: z.number().optional(),
+  handoverCode: z.string().optional(),
   createdAt: z.number(),
 });
 
@@ -352,7 +376,7 @@ export interface S3VectorMetadata {
 
 export interface EventBridgeLifecycleEvent {
   eventId: string;
-  eventType: 'ProcessingStarted' | 'ExtractionComplete' | 'MatchFound' | 'InventoryAdded' | 'S3VectorIngested';
+  eventType: 'ProcessingStarted' | 'ExtractionComplete' | 'MatchFound' | 'InventoryAdded' | 'S3VectorIngested' | 'HandoverConfirmed';
   timestamp: number;
   details: Record<string, any>;
 }
@@ -407,7 +431,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
   async (payload, context) => {
     return await tracer.startSegment('process_whatsapp_inbound_workflow', async (rootSegment) => {
       const startTime = Date.now();
-      const reqId = payload.media_id || payload.message_text || `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const reqId = payload.media_id ? `${payload.media_id}_${Date.now()}` : `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       rootSegment.addAnnotation('requestId', reqId);
       rootSegment.addAnnotation('fromPhoneLast4', payload.from_phone.slice(-4));
 
@@ -495,17 +519,116 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
       let overallStatus: 'processed' | 'matched' | 'added_to_inventory' | 'greeting' | 'spam' | 'needs_year_clarification' = 'processed';
       let lastItemId: string | undefined;
       let lastMatchedDemandId: string | undefined;
+      let lastReplyMessage: string | undefined;
       let totalVectorChunks = 0;
 
       // Step 3 & 4: Iterate over each extracted item in the message
       for (let idx = 0; idx < extractedIntents.length; idx++) {
         const item = extractedIntents[idx];
 
-        if (item.intent === 'catalog') {
+        if (item.intent === 'confirm_handover') {
+          // Process Handover & Sale Confirmation ("Sold", "Vendu", "Remis", "Got it")
+          await context.step(`process-confirm-handover-${reqId}-${idx}`, async () => {
+            return await tracer.startSegment('step_confirm_handover', async () => {
+              const allInventory = await Array.fromAsync(activeInventory.scan());
+              const allDemands = await Array.fromAsync(demandBoard.scan());
+
+              // Check if sender is seller of a reserved or active item
+              const sellerItem = allInventory.find(
+                (i) => i.sellerPhone === payload.from_phone && (i.status === 'reserved' || i.status === 'active')
+              );
+              // Or sender is buyer of a matched demand
+              const buyerDemand = allDemands.find(
+                (d) => d.userPhone === payload.from_phone && d.status === 'matched'
+              );
+
+              if (sellerItem) {
+                const buyerPhone = sellerItem.reservedForPhone || 'the buyer';
+                await activeInventory.put({
+                  ...sellerItem,
+                  status: 'sold',
+                  soldAt: Date.now(),
+                  soldToPhone: buyerPhone,
+                });
+
+                if (sellerItem.matchedDemandId) {
+                  const demand = allDemands.find((d) => d.demandId === sellerItem.matchedDemandId);
+                  if (demand) {
+                    await demandBoard.put({
+                      ...demand,
+                      status: 'fulfilled',
+                    });
+                  }
+                }
+
+                emitLifecycleEvent('HandoverConfirmed', {
+                  itemId: sellerItem.itemId,
+                  sellerPhone: payload.from_phone,
+                  buyerPhone,
+                });
+                metrics.emit('HandoverConfirmedCount', 1, { unit: 'Count' });
+
+                const confirmMsg =
+                  item.lang === 'fr'
+                    ? 'Merci ! Votre livre a été marqué comme vendu et retiré du catalogue disponible. Bonne rentrée scolaire ! 🎓'
+                    : 'Thank you! Your book has been marked as sold and removed from the active catalog. Have a great school year! 🎓';
+                await sendWhatsAppTextMessage(payload.from_phone, confirmMsg);
+                overallStatus = 'processed';
+                lastItemId = sellerItem.itemId;
+                lastReplyMessage = confirmMsg;
+              } else if (buyerDemand) {
+                await demandBoard.put({
+                  ...buyerDemand,
+                  status: 'fulfilled',
+                });
+
+                if (buyerDemand.matchedItemId) {
+                  const matchedBook = allInventory.find((i) => i.itemId === buyerDemand.matchedItemId);
+                  if (matchedBook) {
+                    await activeInventory.put({
+                      ...matchedBook,
+                      status: 'sold',
+                      soldAt: Date.now(),
+                      soldToPhone: payload.from_phone,
+                    });
+                  }
+                }
+
+                emitLifecycleEvent('HandoverConfirmed', {
+                  demandId: buyerDemand.demandId,
+                  buyerPhone: payload.from_phone,
+                });
+                metrics.emit('HandoverConfirmedCount', 1, { unit: 'Count' });
+
+                const confirmMsg =
+                  item.lang === 'fr'
+                    ? "Merci d'avoir confirmé la réception du livre ! Votre demande a été finalisée. 🎓"
+                    : 'Thank you for confirming receipt of the book! Your request has been completed. 🎓';
+                await sendWhatsAppTextMessage(payload.from_phone, confirmMsg);
+                overallStatus = 'processed';
+                lastMatchedDemandId = buyerDemand.demandId;
+                lastReplyMessage = confirmMsg;
+              } else {
+                const noneMsg =
+                  item.lang === 'fr'
+                    ? "Aucun échange en cours n'a été trouvé pour votre numéro. Tapez 'catalogue' pour voir les livres disponibles."
+                    : "No pending exchange was found for your phone number. Type 'catalog' to view available books.";
+                await sendWhatsAppTextMessage(payload.from_phone, noneMsg);
+                overallStatus = 'processed';
+                lastReplyMessage = noneMsg;
+              }
+              return true;
+            });
+          });
+          continue;
+        } else if (item.intent === 'catalog') {
           await context.step(`process-catalog-${reqId}-${idx}`, async () => {
             return await tracer.startSegment('step_process_catalog', async () => {
               const allInventory = await Array.fromAsync(activeInventory.scan());
-              const activeBooks = allInventory.filter((i) => i.status === 'active');
+              const now = Date.now();
+              const activeBooks = allInventory.filter(
+                (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
+              );
 
               if (activeBooks.length === 0) {
                 const emptyMsg = await generateLLMMessage('catalog_empty', { lang: item.lang });
@@ -553,6 +676,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
               const activeMatch = inventoryMatches.find((i) => i.status === 'active');
 
               const demandId = `demand_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+              const handoverCode = Math.floor(1000 + Math.random() * 9000).toString();
               const demandEntry: DemandItem = {
                 demandId,
                 userPhone: payload.from_phone,
@@ -560,31 +684,52 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                 concept: item.concept,
                 domain: item.domain,
                 status: activeMatch ? 'matched' : 'pending',
+                preferredLang: item.lang,
+                matchedItemId: activeMatch?.itemId,
+                matchedAt: activeMatch ? Date.now() : undefined,
+                handoverCode: activeMatch ? handoverCode : undefined,
                 createdAt: Date.now(),
               };
 
               await demandBoard.put(demandEntry);
 
               if (activeMatch) {
+                // Put matched book in 48-Hour Reserved Hold
+                const reservedUntil = Date.now() + 48 * 60 * 60 * 1000;
+                await activeInventory.put({
+                  ...activeMatch,
+                  status: 'reserved',
+                  reservedUntil,
+                  reservedForPhone: payload.from_phone,
+                  matchedDemandId: demandId,
+                  handoverCode,
+                });
+
                 emitLifecycleEvent('MatchFound', {
                   demandId,
                   userPhone: payload.from_phone,
                   matchedConcept: item.concept,
                   matchedItemId: activeMatch.itemId,
+                  handoverCode,
+                  reservedUntil,
                 });
                 overallStatus = 'matched';
                 lastMatchedDemandId = demandId;
                 metrics.emit('DemandMatchedCount', 1, { unit: 'Count' });
 
+                // Asymmetric language routing: Buyer in buyer's lang, Seller in seller's lang
+                const buyerLang = item.lang || 'en';
+                const sellerLang = activeMatch.preferredLang || 'en';
+
                 const buyerMsg = await generateLLMMessage('match_buyer', {
                   title: item.title,
                   phone: activeMatch.sellerPhone,
-                  lang: item.lang,
+                  lang: buyerLang,
                 });
                 const sellerMsg = await generateLLMMessage('match_seller', {
                   title: item.title,
                   phone: payload.from_phone,
-                  lang: 'en',
+                  lang: sellerLang,
                 });
                 await sendWhatsAppTextMessage(payload.from_phone, buyerMsg);
                 await sendWhatsAppTextMessage(activeMatch.sellerPhone, sellerMsg);
@@ -600,30 +745,67 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
           // Process Offer (Inventory listing)
           const matchResult = await context.step(`query-demand-board-matching-${reqId}-${idx}-${item.concept}`, async () => {
             return await tracer.startSegment('step_match_existing_demand', async () => {
-              const allDemands = await Array.fromAsync(
-                demandBoard.query({
-                  index: 'byConcept',
-                  where: { concept: { equals: item.concept } },
-                })
-              );
-              const targetConcept = normalizeConceptKey(item.concept);
-              const openDemand = allDemands.find(
-                (d) => normalizeConceptKey(d.concept) === targetConcept && d.status === 'pending'
-              );
+              const targetConcept = normalizeConceptKey(item.concept, item.title);
+              const allDemands = await Array.fromAsync(demandBoard.scan());
+              const openDemands = allDemands
+                .filter(
+                  (d) =>
+                    d.status === 'pending' &&
+                    (d.concept === item.concept ||
+                      normalizeConceptKey(d.concept, d.requestedQuery) === targetConcept)
+                )
+                .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+              const openDemand = openDemands[0];
 
               if (openDemand) {
+                const handoverCode = Math.floor(1000 + Math.random() * 9000).toString();
+                const reservedUntil = Date.now() + 48 * 60 * 60 * 1000;
+                const id = `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+                const normalizedConcept = normalizeConceptKey(item.concept, item.title);
+
+                // Save matched book in 48-Hour Reserved Hold
+                await activeInventory.put({
+                  itemId: id,
+                  title: item.title,
+                  domain: item.domain,
+                  providerCategory: item.providerCategory,
+                  concept: normalizedConcept,
+                  conditionType: item.conditionType,
+                  description: item.description,
+                  sellerPhone: payload.from_phone,
+                  status: 'reserved',
+                  preferredLang: item.lang,
+                  reservedUntil,
+                  reservedForPhone: openDemand.userPhone,
+                  matchedDemandId: openDemand.demandId,
+                  handoverCode,
+                  createdAt: Date.now(),
+                });
+
                 await demandBoard.put({
                   ...openDemand,
                   status: 'matched',
+                  matchedItemId: id,
+                  matchedAt: Date.now(),
+                  handoverCode,
                 });
 
                 emitLifecycleEvent('MatchFound', {
                   demandId: openDemand.demandId,
                   userPhone: openDemand.userPhone,
                   matchedConcept: item.concept,
+                  matchedItemId: id,
+                  handoverCode,
+                  reservedUntil,
                 });
                 metrics.emit('DemandMatchedCount', 1, { unit: 'Count' });
-                return { matched: true, demand: openDemand };
+                return {
+                  matched: true,
+                  demand: openDemand,
+                  itemId: id,
+                  sellerLang: item.lang,
+                  buyerLang: openDemand.preferredLang || 'en',
+                };
               }
 
               return { matched: false };
@@ -632,17 +814,18 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
           if (matchResult.matched) {
             overallStatus = 'matched';
+            lastItemId = matchResult.itemId;
             lastMatchedDemandId = matchResult.demand?.demandId;
             const openDemand = matchResult.demand!;
             const sellerMsg = await generateLLMMessage('match_buyer', {
               title: item.title,
               phone: openDemand.userPhone,
-              lang: item.lang,
+              lang: matchResult.sellerLang || item.lang,
             });
             const buyerMsg = await generateLLMMessage('match_seller', {
               title: item.title,
               phone: payload.from_phone,
-              lang: 'en',
+              lang: matchResult.buyerLang || openDemand.preferredLang || 'en',
             });
             await sendWhatsAppTextMessage(payload.from_phone, sellerMsg);
             await sendWhatsAppTextMessage(openDemand.userPhone, buyerMsg);
@@ -651,16 +834,18 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
             const itemId = await context.step(`publish-active-inventory-${reqId}-${idx}-${item.concept}`, async () => {
               return await tracer.startSegment('step_publish_active_inventory', async () => {
                 const id = `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+                const normalizedConcept = normalizeConceptKey(item.concept, item.title);
                 const newItem: ActiveInventoryItem = {
                   itemId: id,
                   title: item.title,
                   domain: item.domain,
                   providerCategory: item.providerCategory,
-                  concept: item.concept,
+                  concept: normalizedConcept,
                   conditionType: item.conditionType,
                   description: item.description,
                   sellerPhone: payload.from_phone,
                   status: 'active',
+                  preferredLang: item.lang,
                   createdAt: Date.now(),
                 };
 
@@ -668,7 +853,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
                 emitLifecycleEvent('InventoryAdded', {
                   itemId: id,
-                  concept: item.concept,
+                  concept: normalizedConcept,
                 });
                 metrics.emit('InventoryAddedCount', 1, { unit: 'Count' });
 
@@ -725,6 +910,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         itemId: lastItemId,
         matchedDemandId: lastMatchedDemandId,
         extractedIntentsCount: extractedIntents.length,
+        replyMessage: lastReplyMessage,
         extractedMetadata: primaryMetadata,
         vectorChunksCount: totalVectorChunks,
       };
@@ -740,7 +926,7 @@ export interface WhatsAppInboundPayload {
 }
 
 export interface ExtractedIntentItem {
-  intent: 'offer' | 'demand' | 'greeting' | 'spam' | 'catalog' | 'demand_board';
+  intent: 'offer' | 'demand' | 'greeting' | 'spam' | 'catalog' | 'demand_board' | 'confirm_handover';
   lang: 'en' | 'fr';
   concept: string;
   title: string;
@@ -749,6 +935,50 @@ export interface ExtractedIntentItem {
   conditionType: (typeof CONDITION_TYPES)[number];
   description: string;
   replyMessage?: string;
+}
+
+export function getHelpMessage(lang: 'en' | 'fr' = 'en'): string {
+  if (lang === 'fr') {
+    return [
+      'Bonjour ! 👋 Bienvenue sur Relay ! Vous pouvez :',
+      "1. Partager des livres : 'J'ai des livres de l'année 3'",
+      "2. Demander des livres : 'Je cherche des livres de maths année 9'",
+      "3. Voir les livres disponibles : 'catalogue'",
+      "4. Voir les livres demandés : 'demandes'",
+      '',
+      '*Conseil :* Précisez toujours la classe (ex : 6ème, 3ème, Year 5, Year 8) pour être mis en relation rapidement !',
+    ].join('\n');
+  }
+
+  return [
+    'Hello! 👋 Welcome to Relay! You can:',
+    "1. Share books: 'I have Year 3 books'",
+    "2. Ask for books: 'Looking for Year 9 Maths'",
+    "3. View available books: 'catalog'",
+    "4. View requested books: 'demand board'",
+    '',
+    '*Tip:* Always include the school year (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) for faster matching!',
+  ].join('\n');
+}
+
+export function buildLLMMessagePrompt(
+  scenario: string,
+  lang: 'en' | 'fr',
+  sanitizedParams: Record<string, unknown>
+): string {
+  return `You are an AI assistant for a parent school book marketplace bot on WhatsApp.
+Generate a concise, friendly WhatsApp message for the following scenario:
+
+Scenario: ${scenario}
+Target Language: ${lang === 'fr' ? 'French' : 'English'}
+Context Data: ${JSON.stringify(sanitizedParams)}
+
+Guidelines:
+- Include relevant emojis (📚, 👋, 🤝, 💡).
+- Keep it clear, polite, and direct for parents.
+- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent.
+- If phone is provided, instruct them to contact the matching parent.
+- Output ONLY the message text. Do NOT wrap in quotes or code blocks.`;
 }
 
 /**
@@ -767,6 +997,10 @@ export async function generateLLMMessage(
     | 'year_clarification',
   params: { title?: string; phone?: string; lang?: 'en' | 'fr'; subject?: string }
 ): Promise<string> {
+  if (scenario === 'greeting') {
+    return getHelpMessage(params.lang || 'en');
+  }
+
   return await tracer.startSegment('bedrock_generate_llm_message', async (segment) => {
     const lang = params.lang || 'en';
     const sanitizedParams = {
@@ -774,19 +1008,7 @@ export async function generateLLMMessage(
       phone: params.phone ? `+${params.phone.slice(-4)} (redacted)` : undefined,
     };
 
-    const prompt = `You are an AI assistant for a parent school book marketplace bot on WhatsApp.
-Generate a concise, friendly WhatsApp message for the following scenario:
-
-Scenario: ${scenario}
-Target Language: ${lang === 'fr' ? 'French' : 'English'}
-Context Data: ${JSON.stringify(sanitizedParams)}
-
-Guidelines:
-- Include relevant emojis (📚, 👋, 🤝, 💡).
-- Keep it clear, polite, and direct for parents.
-- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent.
-- If phone is provided, instruct them to contact the matching parent.
-- Output ONLY the message text. Do NOT wrap in quotes or code blocks.`;
+    const prompt = buildLLMMessagePrompt(scenario, lang, sanitizedParams);
 
     const guardrailConfig = process.env.BEDROCK_GUARDRAIL_ID
       ? {
@@ -853,23 +1075,13 @@ Guidelines:
   });
 }
 
-/**
- * Pure LLM Intent Classifier powered by Amazon Bedrock (Amazon Nova Lite / Nova Pro)
- * with pre-prompt PII redaction and Bedrock Guardrails.
- */
-export async function parseParentMessageIntentsWithLLM(text: string): Promise<ExtractedIntentItem[]> {
-  return await tracer.startSegment('bedrock_parse_parent_message_intents', async (segment) => {
-    // Anonymize in-prompt PII
-    const sanitizedText = maskPromptPII(text);
-    segment.addAnnotation('originalTextLength', text.length);
-    segment.addAnnotation('hasPIIRedacted', sanitizedText !== text);
-
-    const prompt = `You are an AI intent classification engine for a bilingual (English & French) parent school book marketplace bot on WhatsApp.
+export function buildIntentClassificationPrompt(sanitizedText: string): string {
+  return `You are an AI intent classification engine for a bilingual (English & French) parent school book marketplace bot on WhatsApp.
 
 Analyze the user's message semantically. Do NOT rely on simple keyword matching — understand the true intent from full sentence context.
 
 Categories of intent:
-1. "greeting": Chit-chat, greetings ("hi", "hello", "bonjour", "salut"), or general help request.
+1. "greeting": Chit-chat, greetings ("hi", "hello", "bonjour", "salut"), tutorials, or help requests ("how do i use this app", "how to use", "tutorials", "tutoriel", "help", "guide").
 2. "catalog": Asking to see available books in stock ("catalog", "catalogue", "what books are available").
 3. "demand_board": Asking to see what books other parents need ("demand board", "wishlist", "demandes").
 4. "offer": The user HAS, IS SELLING, GIVING AWAY, OR LISTING a book for others (e.g., "I have Year 6 books", "J'ai un livre de maths", "Year 5 textbook available").
@@ -899,6 +1111,68 @@ Extract all intents from the message into JSON:
 }
 
 Respond ONLY with valid JSON inside a \`\`\`json block.`;
+}
+
+/**
+ * Pure LLM Intent Classifier powered by Amazon Bedrock (Amazon Nova Lite / Nova Pro)
+ * with pre-prompt PII redaction and Bedrock Guardrails.
+ */
+export async function parseParentMessageIntentsWithLLM(text: string): Promise<ExtractedIntentItem[]> {
+  return await tracer.startSegment('bedrock_parse_parent_message_intents', async (segment) => {
+    // Fast-path for greetings, tutorials, and help questions
+    const trimmed = text.trim().toLowerCase();
+    const isGreetingOrHelp =
+      /^(?:hi|hello|hey|bonjour|salut|coucou|aide|help|tutorial|tutorials|tutoriel|tutoriels|how to use|how do i use|how do i use this app|\?)$/i.test(trimmed) ||
+      /\b(how do i use this app|how to use this app|tutorials?|tutoriels?|comment utiliser|mode d'emploi)\b/i.test(trimmed);
+
+    if (isGreetingOrHelp) {
+      const isFr = /\b(?:bonjour|salut|coucou|aide|tutoriel|tutoriels|comment|livres?)\b/i.test(trimmed);
+      const lang = isFr ? 'fr' : 'en';
+      return [
+        {
+          intent: 'greeting',
+          lang,
+          concept: 'GeneralBooks',
+          title: isFr ? 'Guide & Bienvenue' : 'Help & Welcome',
+          domain: 'Science',
+          providerCategory: 'HighSchool',
+          conditionType: 'Good',
+          description: text,
+          replyMessage: getHelpMessage(lang),
+        },
+      ];
+    }
+
+    // Fast-path for handover and sale confirmation ("Sold", "Vendu", "Got the book", "Remis")
+    const isHandoverConfirmation =
+      /^(?:sold|vendu|done|donn[ée]|remis|confirm[ée]?|j'ai vendu|j'ai donn[ée]|livre remis|c'est bon|c'est fait|handover completed|exchange completed|got the books?|received the books?)\b/i.test(
+        trimmed
+      ) ||
+      /\b(handover confirmed|book received|livre bien re[çc]u|remis au parent)\b/i.test(trimmed);
+
+    if (isHandoverConfirmation) {
+      const isFr = /\b(?:vendu|donn[ée]|remis|re[çc]u|fait|bon|livre|parent)\b/i.test(trimmed);
+      const lang = isFr ? 'fr' : 'en';
+      return [
+        {
+          intent: 'confirm_handover',
+          lang,
+          concept: 'GeneralBooks',
+          title: isFr ? 'Confirmation Remise' : 'Handover Confirmation',
+          domain: 'Science',
+          providerCategory: 'HighSchool',
+          conditionType: 'Good',
+          description: text,
+        },
+      ];
+    }
+
+    // Anonymize in-prompt PII
+    const sanitizedText = maskPromptPII(text);
+    segment.addAnnotation('originalTextLength', text.length);
+    segment.addAnnotation('hasPIIRedacted', sanitizedText !== text);
+
+    const prompt = buildIntentClassificationPrompt(sanitizedText);
 
     const guardrailConfig = process.env.BEDROCK_GUARDRAIL_ID
       ? {
@@ -1018,17 +1292,23 @@ export function normalizeConceptKey(rawConcept: string, fallbackText: string = '
   const yearMatch = clean.match(/(?:Year|Année)\s*(\d{1,2})/i) || fallbackText.match(/(?:Year|Année|Grade)\s*(\d{1,2})/i);
   
   const num = yearMatch ? yearMatch[1] : '';
-  const lower = (clean + ' ' + fallbackText).toLowerCase();
-
   const prefix = num ? `Year${num}` : 'General';
 
-  if (lower.includes('chemistry') || lower.includes('chimie')) return `${prefix}Chemistry`;
-  if (lower.includes('science')) return `${prefix}Science`;
-  if (lower.includes('english') || lower.includes('anglais')) return `${prefix}English`;
-  if (lower.includes('math')) return `${prefix}Mathematics`;
-  if (lower.includes('physics') || lower.includes('physique')) return `${prefix}Physics`;
-  if (lower.includes('computer') || lower.includes('coding')) return `${prefix}ComputerScience`;
-  if (lower.includes('global')) return `${prefix}GlobalPerspectives`;
+  // Check specific concept string first to avoid multi-intent text contamination
+  const conceptLower = clean.toLowerCase();
+  const textToCheck = conceptLower.length > (num ? `Year${num}`.length : 0) ? conceptLower : fallbackText.toLowerCase();
+
+  if (textToCheck.includes('chemistry') || textToCheck.includes('chimie')) return `${prefix}Chemistry`;
+  if (textToCheck.includes('biology') || textToCheck.includes('biologie')) return `${prefix}Biology`;
+  if (textToCheck.includes('physics') || textToCheck.includes('physique')) return `${prefix}Physics`;
+  if (textToCheck.includes('humanities') || textToCheck.includes('humanite')) return `${prefix}Humanities`;
+  if (textToCheck.includes('history') || textToCheck.includes('histoire')) return `${prefix}History`;
+  if (textToCheck.includes('geography') || textToCheck.includes('geographie')) return `${prefix}Geography`;
+  if (textToCheck.includes('math')) return `${prefix}Mathematics`;
+  if (textToCheck.includes('english') || textToCheck.includes('anglais')) return `${prefix}English`;
+  if (textToCheck.includes('science')) return `${prefix}Science`;
+  if (textToCheck.includes('computer') || textToCheck.includes('coding')) return `${prefix}ComputerScience`;
+  if (textToCheck.includes('global')) return `${prefix}GlobalPerspectives`;
 
   return `${prefix}Books`;
 }
@@ -1049,8 +1329,48 @@ function cleanSubjectName(rawSubject: string, lang: 'en' | 'fr'): string {
   return clean.charAt(0).toUpperCase() + clean.slice(1);
 }
 
-export function buildGroupedCatalogText(activeBooks: ActiveInventoryItem[], lang: 'en' | 'fr'): string {
-  const yearGroups: Record<string, Record<string, { displaySubject: string; count: number }>> = {};
+export function formatConditionBadges(conditions: string[], lang: 'en' | 'fr'): string {
+  if (!conditions || conditions.length === 0) return '';
+
+  const counts: Record<string, number> = {};
+  for (const c of conditions) {
+    if (c) counts[c] = (counts[c] || 0) + 1;
+  }
+
+  const badgeMapEn: Record<string, string> = {
+    New: 'New',
+    LikeNew: 'Like New',
+    Good: 'Good',
+    Acceptable: 'Acceptable',
+  };
+
+  const badgeMapFr: Record<string, string> = {
+    New: 'Neuf',
+    LikeNew: 'Comme Neuf',
+    Good: 'Bon État',
+    Acceptable: 'Acceptable',
+  };
+
+  const map = lang === 'fr' ? badgeMapFr : badgeMapEn;
+  const badges: string[] = [];
+
+  for (const [cond, cnt] of Object.entries(counts)) {
+    const badge = map[cond] || cond;
+    if (cnt > 1 && Object.keys(counts).length > 1) {
+      badges.push(`${badge} ×${cnt}`);
+    } else {
+      badges.push(badge);
+    }
+  }
+
+  return badges.length > 0 ? ` — ${badges.join(', ')}` : '';
+}
+
+export function buildGroupedCatalogText(
+  activeBooks: Array<{ title: string; conditionType?: string; [key: string]: any }>,
+  lang: 'en' | 'fr'
+): string {
+  const yearGroups: Record<string, Record<string, { displaySubject: string; count: number; conditions: string[] }>> = {};
 
   for (const book of activeBooks) {
     const rawTitle = book.title || '';
@@ -1075,9 +1395,12 @@ export function buildGroupedCatalogText(activeBooks: ActiveInventoryItem[], lang
       yearGroups[yearLabel] = {};
     }
     if (!yearGroups[yearLabel][key]) {
-      yearGroups[yearLabel][key] = { displaySubject, count: 0 };
+      yearGroups[yearLabel][key] = { displaySubject, count: 0, conditions: [] };
     }
     yearGroups[yearLabel][key].count += 1;
+    if (book.conditionType) {
+      yearGroups[yearLabel][key].conditions.push(book.conditionType);
+    }
   }
 
   const sortedYears = Object.keys(yearGroups).sort((a, b) => {
@@ -1090,8 +1413,8 @@ export function buildGroupedCatalogText(activeBooks: ActiveInventoryItem[], lang
   const totalCount = activeBooks.length;
   const header =
     lang === 'fr'
-      ? `📚 *Livres disponibles dans la communauté* (${totalCount} au total) :`
-      : `📚 *Books Available in the Community* (${totalCount} total) :`;
+      ? `*Livres disponibles dans la communauté* (${totalCount} au total) :`
+      : `*Books Available in the Community* (${totalCount} total) :`;
 
   parts.push(header);
 
@@ -1101,14 +1424,15 @@ export function buildGroupedCatalogText(activeBooks: ActiveInventoryItem[], lang
     parts.push(`\n*${year}*`);
     for (const item of items) {
       const availableText = lang === 'fr' ? `${item.count} disponible(s)` : `${item.count} available`;
-      parts.push(`• ${item.displaySubject} (${availableText})`);
+      const conditionBadgeText = formatConditionBadges(item.conditions, lang);
+      parts.push(`• ${item.displaySubject} (${availableText}${conditionBadgeText})`);
     }
   }
 
   const footer =
     lang === 'fr'
-      ? `\n💡 Répondez avec *"Je cherche [Matière/Année]"* pour en demander un !`
-      : `\n💡 Reply with *"Looking for [Subject/Year]"* to request one!`;
+      ? `\nRépondez avec *"Je cherche [Matière/Année]"* pour en demander un !`
+      : `\nReply with *"Looking for [Subject/Year]"* to request one!`;
 
   parts.push(footer);
 
@@ -1132,9 +1456,172 @@ export interface WebhookProcessingResult {
   vectorChunksCount?: number;
 }
 
+// ─── 4B. Autonomous Strands Agent & Tools (Agents for Humans Hackathon) ──────
+
+export const booksAgent = new Agent(scope, 'books-agent', {
+  model: {
+    deployed: BedrockModels.BALANCED,
+  },
+  systemPrompt: `You are Relay, an autonomous AI assistant for a parent school textbook marketplace and exchange community on WhatsApp and the web.
+Your mission is to help parents effortlessly find school books, list books they want to sell or donate, check community wishlists, and match buying parents to selling parents.
+
+Key Behaviors & Capabilities:
+- Use your tools to search active inventory, inspect community demand wishlists, register new book listings, and record parent demands.
+- Always recommend including the school grade or year (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) to ensure high-accuracy matches between parents.
+- Respond in the language used by the parent (English or French).
+- Keep replies concise, empathetic, warm, and helpful for busy parents, with relevant emojis (📚, 👋, 🤝, 💡).`,
+  tools: (tool) => ({
+    searchInventory: tool({
+      description: 'Search available books in active stock by concept, subject domain, or title keyword',
+      parameters: z.object({
+        concept: z.string().optional().describe('School grade and subject concept, e.g. Year5Chemistry, Year12Mathematics'),
+        domain: z.enum(DOMAIN_TYPES).optional().describe('Subject domain'),
+        query: z.string().optional().describe('Title or description keyword to search'),
+      }),
+      handler: async ({ input }) => {
+        const allItems = await Array.fromAsync(activeInventory.scan());
+        let matches = allItems.filter((item) => item.status === 'active');
+        if (input.concept) {
+          const normConcept = normalizeConceptKey(input.concept);
+          matches = matches.filter(
+            (i) => normalizeConceptKey(i.concept).includes(normConcept) || i.concept.toLowerCase().includes(input.concept!.toLowerCase())
+          );
+        }
+        if (input.domain) {
+          matches = matches.filter((i) => i.domain === input.domain);
+        }
+        if (input.query) {
+          const q = input.query.toLowerCase();
+          matches = matches.filter((i) => i.title.toLowerCase().includes(q) || i.description.toLowerCase().includes(q));
+        }
+        return matches.map((m) => ({
+          itemId: m.itemId,
+          title: m.title,
+          concept: m.concept,
+          domain: m.domain,
+          condition: m.conditionType,
+          sellerPhone: m.sellerPhone.slice(0, 4) + '****' + m.sellerPhone.slice(-3),
+        }));
+      },
+    }),
+    listDemands: tool({
+      description: 'List requested books on the demand board (wishlist) that parents are actively looking for',
+      parameters: z.object({
+        concept: z.string().optional().describe('Filter by school grade and subject concept, e.g. Year8Science'),
+      }),
+      handler: async ({ input }) => {
+        const allDemands = await Array.fromAsync(demandBoard.scan());
+        let pending = allDemands.filter((d) => d.status === 'pending');
+        if (input.concept) {
+          const normConcept = normalizeConceptKey(input.concept);
+          pending = pending.filter(
+            (d) => normalizeConceptKey(d.concept).includes(normConcept) || d.concept.toLowerCase().includes(input.concept!.toLowerCase())
+          );
+        }
+        return pending.map((d) => ({
+          demandId: d.demandId,
+          requestedQuery: d.requestedQuery,
+          concept: d.concept,
+          domain: d.domain,
+          userPhone: d.userPhone.slice(0, 4) + '****' + d.userPhone.slice(-3),
+        }));
+      },
+    }),
+    createDemand: tool({
+      description: 'Register a book wishlist demand when a requested book is not currently in stock',
+      parameters: z.object({
+        userPhone: z.string().describe('Phone number of the parent looking for the book'),
+        requestedQuery: z.string().describe('Title or description of the book requested'),
+        concept: z.string().describe('Normalized concept e.g. Year7Maths, Year10Physics'),
+        domain: z.enum(DOMAIN_TYPES).optional().default('Science'),
+        preferredLang: z.enum(['en', 'fr']).optional().default('en'),
+      }),
+      handler: async ({ input }) => {
+        const demandId = `demand_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const demand: DemandItem = {
+          demandId,
+          userPhone: input.userPhone,
+          requestedQuery: input.requestedQuery,
+          concept: input.concept,
+          domain: input.domain || 'Science',
+          status: 'pending',
+          preferredLang: input.preferredLang || 'en',
+          createdAt: Date.now(),
+        };
+        await demandBoard.put(demand);
+        return { success: true, demandId: demand.demandId, status: demand.status };
+      },
+    }),
+    registerBookOffer: tool({
+      description: 'List a book offered by a parent for sale or donation in the marketplace',
+      parameters: z.object({
+        sellerPhone: z.string().describe('Phone number of the parent offering the book'),
+        title: z.string().describe('Book title'),
+        concept: z.string().describe('Normalized concept e.g. Year8Chemistry'),
+        domain: z.enum(DOMAIN_TYPES),
+        providerCategory: z.enum(PROVIDER_CATEGORIES).optional().default('MiddleSchool'),
+        conditionType: z.enum(CONDITION_TYPES).optional().default('Good'),
+        description: z.string().optional().default(''),
+        preferredLang: z.enum(['en', 'fr']).optional().default('en'),
+      }),
+      handler: async ({ input }) => {
+        const itemId = `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const newItem: ActiveInventoryItem = {
+          itemId,
+          title: input.title,
+          domain: input.domain,
+          providerCategory: input.providerCategory || 'MiddleSchool',
+          concept: input.concept,
+          conditionType: input.conditionType || 'Good',
+          description: input.description || '',
+          sellerPhone: input.sellerPhone,
+          status: 'active',
+          preferredLang: input.preferredLang || 'en',
+          createdAt: Date.now(),
+        };
+        await activeInventory.put(newItem);
+        return { success: true, itemId: newItem.itemId, status: newItem.status };
+      },
+    }),
+    getSellerCatalog: tool({
+      description: 'Get all active book listings posted by a specific parent',
+      parameters: z.object({
+        sellerPhone: z.string().describe('Seller parent phone number'),
+      }),
+      handler: async ({ input }) => {
+        const allItems = await Array.fromAsync(activeInventory.scan());
+        const sellerItems = allItems.filter((i) => i.sellerPhone === input.sellerPhone && i.status === 'active');
+        return sellerItems.map((i) => ({
+          itemId: i.itemId,
+          title: i.title,
+          concept: i.concept,
+          condition: i.conditionType,
+          createdAt: i.createdAt,
+        }));
+      },
+    }),
+  }),
+});
+
 // ─── 5. API Gateway Webhook & Management Endpoints ─────────────────────────────
 
 export const api = new ApiNamespace(scope, 'api', () => ({
+  /**
+   * 0. Conversational Strands Agent Chat Endpoint
+   */
+  async chatWithAgent(message: string, conversationId?: string, userId: string = 'parent_user') {
+    const convId = conversationId || (await booksAgent.createConversationId(userId));
+    const result = await booksAgent.stream(message, {
+      conversationId: convId,
+      userId,
+    });
+    const done = await result.complete();
+    return {
+      conversationId: convId,
+      replyText: done.text,
+      usage: done.usage,
+    };
+  },
   /**
    * 1. API Gateway Webhook Verification Handshake
    * Echoes hub.challenge if hub.mode === 'subscribe' and token matches.
@@ -1179,7 +1666,7 @@ export const api = new ApiNamespace(scope, 'api', () => ({
   /**
    * 4. Wishlist / Demand Board Request Endpoint
    */
-  async createDemand(userPhone: string, requestedQuery: string, concept: string, domain: string = 'Marketplace') {
+  async createDemand(userPhone: string, requestedQuery: string, concept: string, domain: string = 'Marketplace', preferredLang: 'en' | 'fr' = 'en') {
     const demandId = `demand_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const demand: DemandItem = {
       demandId,
@@ -1188,6 +1675,7 @@ export const api = new ApiNamespace(scope, 'api', () => ({
       concept,
       domain,
       status: 'pending',
+      preferredLang,
       createdAt: Date.now(),
     };
 
@@ -1198,11 +1686,17 @@ export const api = new ApiNamespace(scope, 'api', () => ({
   /** List Active Inventory */
   async listInventory(concept?: string) {
     if (concept) {
-      return await Array.fromAsync(
+      const normalized = normalizeConceptKey(concept);
+      const queryResults = await Array.fromAsync(
         activeInventory.query({
           index: 'byConcept',
           where: { concept: { equals: concept } },
         })
+      );
+      if (queryResults.length > 0) return queryResults;
+      const all = await Array.fromAsync(activeInventory.scan());
+      return all.filter(
+        (i) => normalizeConceptKey(i.concept) === normalized || i.concept.toLowerCase() === concept.toLowerCase()
       );
     }
     return await Array.fromAsync(activeInventory.scan());
@@ -1226,6 +1720,86 @@ export const api = new ApiNamespace(scope, 'api', () => ({
     return allItems.filter((item) => item.sellerPhone === sellerPhone);
   },
 
+  /** Retrieve complete Seller Storefront with Grade Bundles (Feature 3A) */
+  async getSellerStorefront(sellerPhone: string) {
+    const allItems = await Array.fromAsync(activeInventory.scan());
+    const sellerItems = allItems.filter((item) => item.sellerPhone === sellerPhone);
+
+    // Group items into Grade Bundles
+    const bundles: Record<string, { grade: string; count: number; items: typeof sellerItems }> = {};
+    for (const item of sellerItems) {
+      const match = item.concept.match(/Year(\d+)/i) || item.title.match(/Year\s*(\d+)/i);
+      const grade = match ? `Year ${match[1]}` : item.providerCategory || 'General';
+      if (!bundles[grade]) {
+        bundles[grade] = { grade, count: 0, items: [] };
+      }
+      bundles[grade].count++;
+      bundles[grade].items.push(item);
+    }
+
+    return {
+      sellerPhone,
+      totalBooks: sellerItems.length,
+      bundles: Object.values(bundles).sort((a, b) => b.count - a.count),
+      items: sellerItems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
+    };
+  },
+
+  /** Analyze inventory deficits and generate targeted WhatsApp supply campaigns (Feature 3B) */
+  async getSupplyGaps() {
+    const [allItems, allDemands] = await Promise.all([
+      Array.fromAsync(activeInventory.scan()),
+      Array.fromAsync(demandBoard.scan()),
+    ]);
+
+    const domainCounts: Record<string, number> = {
+      Mathematics: 0,
+      Science: 0,
+      Languages: 0,
+      Humanities: 0,
+      Arts: 0,
+    };
+    const gradeCounts: Record<string, number> = {};
+
+    for (const item of allItems) {
+      if (domainCounts[item.domain] !== undefined) {
+        domainCounts[item.domain]++;
+      }
+      const match = item.concept.match(/Year(\d+)/i) || item.title.match(/Year\s*(\d+)/i);
+      const gradeKey = match ? `Year ${match[1]}` : item.providerCategory || 'General';
+      gradeCounts[gradeKey] = (gradeCounts[gradeKey] || 0) + 1;
+    }
+
+    const pendingDemands = allDemands.filter((d) => d.status === 'pending');
+
+    // Identify deficit subjects (less than 5 items or high pending demand)
+    const deficitSubjects = Object.entries(domainCounts)
+      .filter(([_, count]) => count < 6)
+      .map(([domain, count]) => ({ domain, count }));
+
+    // Identify deficit grades
+    const deficitGrades = ['Year 6', 'Year 7', 'Year 8', 'Year 9', 'Year 11']
+      .map((grade) => ({ grade, count: gradeCounts[grade] || 0 }))
+      .filter((g) => g.count <= 2);
+
+    const broadcastMessageEn = `📢 *Relay Community Supply Call!* 📚
+We are currently seeking textbooks in *${deficitSubjects.map((s) => s.domain).join(', ')}* and grades *${deficitGrades.map((g) => g.grade).join(', ')}*.
+Have extra books? Reply with photos to match directly with waiting parents!`;
+
+    const broadcastMessageFr = `📢 *Appel aux Livres - Communauté Relay !* 📚
+Nous recherchons actuellement des manuels de *${deficitSubjects.map((s) => s.domain).join(', ')}* et pour les classes *${deficitGrades.map((g) => g.grade).join(', ')}*.
+Vous avez des livres ? Répondez avec des photos pour aider les parents en attente !`;
+
+    return {
+      totalInventory: allItems.length,
+      pendingDemandsCount: pendingDemands.length,
+      deficitSubjects,
+      deficitGrades,
+      broadcastMessageEn,
+      broadcastMessageFr,
+    };
+  },
+
   /** List Demand Board items */
   async listDemands() {
     return await Array.fromAsync(demandBoard.scan());
@@ -1239,6 +1813,43 @@ export const api = new ApiNamespace(scope, 'api', () => ({
   /** Helper to test 2KB chunking */
   async chunkText(text: string, maxBytes: number = 2048) {
     return chunkTextForVectorStore(text, maxBytes);
+  },
+
+  /** Confirm Handover / Mark Book Sold (48H Fulfillment Loop) */
+  async confirmHandover(payload: { itemId: string; demandId?: string }) {
+    const item = await activeInventory.get({ itemId: payload.itemId });
+    if (item) {
+      await activeInventory.put({
+        ...item,
+        status: 'sold',
+        soldAt: Date.now(),
+      });
+    }
+    if (payload.demandId) {
+      const demand = await demandBoard.get({ demandId: payload.demandId });
+      if (demand) {
+        await demandBoard.put({
+          ...demand,
+          status: 'fulfilled',
+        });
+      }
+    }
+    return { success: true, itemId: payload.itemId };
+  },
+
+  /** Release 48H Hold back to active inventory */
+  async releaseHold(payload: { itemId: string }) {
+    const item = await activeInventory.get({ itemId: payload.itemId });
+    if (item) {
+      await activeInventory.put({
+        ...item,
+        status: 'active',
+        reservedUntil: undefined,
+        reservedForPhone: undefined,
+        matchedDemandId: undefined,
+      });
+    }
+    return { success: true, itemId: payload.itemId };
   },
 
   /** Security & Observability System Status */
@@ -1315,13 +1926,21 @@ export const webhookPost = new RawRoute(scope, 'webhook-post', {
     }
 
     const entry = payload?.entry?.[0]?.changes?.[0]?.value;
+
+    // Meta sends delivery receipts and status updates (sent, delivered, read) - acknowledge with 200
+    if (entry?.statuses && !entry?.messages) {
+      context.response.status = 200;
+      context.response.send({ status: 'success', message: 'Status receipt acknowledged' });
+      return;
+    }
+
     const fromPhone = entry?.messages?.[0]?.from || payload?.from_phone;
     const messageText = entry?.messages?.[0]?.text?.body || payload?.message_text;
     const mediaId = entry?.messages?.[0]?.image?.id || payload?.media_id;
 
     if (!fromPhone || (!messageText && !mediaId)) {
-      context.response.status = 400;
-      context.response.send({ status: 'error', message: 'Missing from_phone or message content' });
+      context.response.status = 200;
+      context.response.send({ status: 'ignored', message: 'No actionable message content' });
       return;
     }
 

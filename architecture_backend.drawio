@@ -1,0 +1,198 @@
+<mxfile host="app.diagrams.net" modified="2026-08-22T19:35:00.000Z" agent="Antigravity" version="24.7.5">
+  <diagram id="BooksBlockBackend" name="Relay - Strands Agent Architecture">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1920" pageHeight="1080" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <!-- 1. EXTERNAL CLIENTS & INTERACTION LAYER                           -->
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <mxCell id="layer_clients" value="1. Client &amp; Community Ingress Layer" style="swimlane;whiteSpace=wrap;html=1;fillColor=#0F172A;strokeColor=#38BDF8;fontColor=#F8FAFC;fontStyle=1;rounded=1;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="340" height="980" as="geometry" />
+        </mxCell>
+
+        <mxCell id="parent_user" value="Parent Community&#xa;(WhatsApp Mobile App)&#xa;📱 Natural Language &amp; Book Photos&#xa;Bilingual (English / French)" style="shape=mxgraph.cisco.misc.user;html=1;dashed=0;whitespace=wrap;fillColor=#10B981;strokeColor=#059669;fontColor=#FFFFFF;fontStyle=1;align=center;" vertex="1" parent="layer_clients">
+          <mxGeometry x="40" y="60" width="260" height="100" as="geometry" />
+        </mxCell>
+
+        <mxCell id="meta_cloud" value="Meta WhatsApp Cloud API&#xa;⚡ https://graph.facebook.com/v25.0/&#xa;HMAC-SHA256 Webhook Dispatch&#xa;Sub-3s Response SLA" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2563EB;strokeColor=#1D4ED8;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_clients">
+          <mxGeometry x="40" y="240" width="260" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="web_frontend" value="Admin &amp; Parent Web App&#xa;🌐 CloudFront CDN + Vite Single Page App&#xa;Live Catalog &amp; Real-time Chat&#xa;https://d3cdc2mtpqk5ut.cloudfront.net" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#8B5CF6;strokeColor=#7C3AED;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_clients">
+          <mxGeometry x="40" y="480" width="260" height="100" as="geometry" />
+        </mxCell>
+
+        <mxCell id="realtime_ws" value="WebSocket Streaming Channel&#xa;⚡ wss://ftuliydf8c.execute-api.../rt&#xa;Token &amp; Block Streaming for Web UI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#06B6D4;strokeColor=#0891B2;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_clients">
+          <mxGeometry x="40" y="640" width="260" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="secrets_manager" value="AWS Secrets Manager&#xa;🔑 Meta Token, Phone ID, App Secret&#xa;Dynamic TTL Caching (5m)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D97706;strokeColor=#B45309;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_clients">
+          <mxGeometry x="40" y="810" width="260" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <!-- 2. SECURITY, INGRESS & ROUTING BOUNDARY                          -->
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <mxCell id="layer_security" value="2. Security, Ingress &amp; Governance Boundary" style="swimlane;whiteSpace=wrap;html=1;fillColor=#1E1B4B;strokeColor=#818CF8;fontColor=#C7D2FE;fontStyle=1;rounded=1;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="420" y="40" width="340" height="980" as="geometry" />
+        </mxCell>
+
+        <mxCell id="waf_shield" value="AWS WAF v2&#xa;🛡️ Rate Limiting &amp; IP Reputation&#xa;SQLi / XSS Attack Shield" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DC2626;strokeColor=#B91C1C;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_security">
+          <mxGeometry x="30" y="60" width="280" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="api_gw_webhook" value="POST /webhook (RawRoute)&#xa;Meta Inbound Webhook Endpoint&#xa;Instant 200 OK Handshake" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0284C7;strokeColor=#0369A1;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_security">
+          <mxGeometry x="30" y="210" width="280" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sig_validator" value="HMAC-SHA256 Verifier&#xa;🔒 timingSafeEqual Check&#xa;Payload Tamper Protection" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#059669;strokeColor=#047857;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_security">
+          <mxGeometry x="30" y="330" width="280" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pii_sanitizer" value="In-Prompt PII Redactor&#xa;🛡️ maskPromptPII()&#xa;Regex Phone, Email, Address Masking" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D97706;strokeColor=#B45309;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_security">
+          <mxGeometry x="30" y="440" width="280" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="api_gw_rpc" value="POST /aws-blocks/api (ApiNamespace)&#xa;Type-Safe JSON-RPC Namespace&#xa;chatWithAgent, Storefront, Deficits" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7C3AED;strokeColor=#6D28D9;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_security">
+          <mxGeometry x="30" y="580" width="280" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="kms_encryption" value="AWS KMS Customer Managed Key&#xa;🔐 alias/books-block-app-cmk&#xa;Envelope Encryption for DynamoDB &amp; S3" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#475569;strokeColor=#334155;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_security">
+          <mxGeometry x="30" y="810" width="280" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <!-- 3. STRANDS AGENT & DURABLE COMPUTE LAYER                         -->
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <mxCell id="layer_agent" value="3. Strands Agents SDK &amp; Autonomous Reasoning Engine" style="swimlane;whiteSpace=wrap;html=1;fillColor=#172554;strokeColor=#60A5FA;fontColor=#DBEAFE;fontStyle=1;rounded=1;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="800" y="40" width="460" height="980" as="geometry" />
+        </mxCell>
+
+        <mxCell id="strands_core" value="Strands Agent Core (booksAgent)&#xa;🤖 @aws-blocks/bb-agent with Strands Agents SDK&#xa;Model-Driven Multi-Turn Reasoning Loop&#xa;BedrockModels.BALANCED (Claude 3.5/3.7 Sonnet)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2563EB;strokeColor=#1D4ED8;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_agent">
+          <mxGeometry x="30" y="50" width="400" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tool_search" value="Agent Tool: searchInventory&#xa;🔍 Zod Schema: concept, domain, query&#xa;Finds matching books in active stock" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0284C7;strokeColor=#0369A1;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_agent">
+          <mxGeometry x="30" y="170" width="400" height="65" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tool_demands" value="Agent Tool: listDemands&#xa;📋 Zod Schema: concept filter&#xa;Inspects community wishlist requests" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0891B2;strokeColor=#0E7490;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_agent">
+          <mxGeometry x="30" y="250" width="400" height="65" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tool_create_demand" value="Agent Tool: createDemand&#xa;➕ Zod Schema: userPhone, requestedQuery, concept&#xa;Creates pending demand for out-of-stock books" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0D9488;strokeColor=#0F766E;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_agent">
+          <mxGeometry x="30" y="330" width="400" height="65" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tool_register_offer" value="Agent Tool: registerBookOffer&#xa;📚 Zod Schema: sellerPhone, title, concept, condition&#xa;Adds active listing &amp; triggers auto-matching" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#16A34A;strokeColor=#15803D;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_agent">
+          <mxGeometry x="30" y="410" width="400" height="65" as="geometry" />
+        </mxCell>
+
+        <mxCell id="durable_engine" value="AWS Lambda Durable Step Engine&#xa;⚙️ withDurableExecution(processWhatsAppInbound)&#xa;48H Hold, Multi-Photo Ingestion &amp; Idempotency" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4F46E5;strokeColor=#4338CA;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_agent">
+          <mxGeometry x="30" y="500" width="400" height="75" as="geometry" />
+        </mxCell>
+
+        <mxCell id="matchmaker_engine" value="Proactive Matchmaking Engine&#xa;🎯 GSI byConcept Lookup + Concept Key Normalizer&#xa;48H Reserved Hold Lock &amp; Handover Code" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#059669;strokeColor=#047857;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_agent">
+          <mxGeometry x="30" y="600" width="400" height="75" as="geometry" />
+        </mxCell>
+
+        <mxCell id="storefront_deficit" value="Storefront &amp; Deficit Campaign Engine&#xa;📊 Grade Bundles (3A) &amp; Supply Gap Broadcasts (3B)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7C3AED;strokeColor=#6D28D9;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_agent">
+          <mxGeometry x="30" y="700" width="400" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="outbound_dispatcher" value="WhatsApp Outbound Dispatcher&#xa;📤 sendWhatsAppTextMessage() via Meta Graph API&#xa;EMF Latency Tracking &amp; Rate-limit Protection" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2563EB;strokeColor=#1D4ED8;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="layer_agent">
+          <mxGeometry x="30" y="810" width="400" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <!-- 4. PERSISTENCE, VECTORS & OBSERVABILITY                          -->
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <mxCell id="layer_storage" value="4. Persistence, Vectors &amp; Enterprise Telemetry" style="swimlane;whiteSpace=wrap;html=1;fillColor=#064E3B;strokeColor=#34D399;fontColor=#A7F3D0;fontStyle=1;rounded=1;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="40" width="380" height="980" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dynamo_inventory" value="DynamoDB: active-inventory&#xa;📊 PK: itemId&#xa;🔍 GSI: byConcept (concept PK, createdAt SK)&#xa;Attrs: status (active|reserved|sold), holdExpires" style="shape=mxgraph.aws4.dynamodb;whiteSpace=wrap;html=1;fillColor=#2563EB;strokeColor=#1D4ED8;fontColor=#FFFFFF;fontStyle=1;align=center;" vertex="1" parent="layer_storage">
+          <mxGeometry x="40" y="60" width="300" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dynamo_demand" value="DynamoDB: demand-board&#xa;📋 PK: demandId&#xa;🔍 GSI: byConcept (concept PK, createdAt SK)&#xa;Attrs: userPhone, requestedQuery, status" style="shape=mxgraph.aws4.dynamodb;whiteSpace=wrap;html=1;fillColor=#0891B2;strokeColor=#0E7490;fontColor=#FFFFFF;fontStyle=1;align=center;" vertex="1" parent="layer_storage">
+          <mxGeometry x="40" y="190" width="300" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s3_images" value="Amazon S3: parent-book-images&#xa;🖼️ Uploaded book cover images&#xa;⏳ 30-Day Auto-Expiration Lifecycle Expiry" style="shape=mxgraph.aws4.s3;whiteSpace=wrap;html=1;fillColor=#16A34A;strokeColor=#15803D;fontColor=#FFFFFF;fontStyle=1;align=center;" vertex="1" parent="layer_storage">
+          <mxGeometry x="40" y="320" width="300" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="bedrock_kb" value="Amazon Bedrock KnowledgeBase&#xa;🧠 S3 Vectors &amp; Semantic Retrieval&#xa;Chunking: 2048 Bytes Maximum Enforcement" style="shape=mxgraph.aws4.opensearch_service;whiteSpace=wrap;html=1;fillColor=#9333EA;strokeColor=#7E22CE;fontColor=#FFFFFF;fontStyle=1;align=center;" vertex="1" parent="layer_storage">
+          <mxGeometry x="40" y="445" width="300" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="eventbridge_bus" value="Amazon EventBridge Lifecycle Events&#xa;📡 ProcessingStarted, ExtractionComplete,&#xa;MatchFound, InventoryAdded, HandoverConfirmed" style="shape=mxgraph.aws4.eventbridge;whiteSpace=wrap;html=1;fillColor=#EA580C;strokeColor=#C2410C;fontColor=#FFFFFF;fontStyle=1;align=center;" vertex="1" parent="layer_storage">
+          <mxGeometry x="40" y="570" width="300" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cloudwatch_emf" value="CloudWatch Metrics (EMF)&#xa;📈 Namespace: BooksApp/WhatsAppMarketplace&#xa;Alarms: ThrottlingErrors, DeliveryFailures" style="shape=mxgraph.aws4.cloudwatch;whiteSpace=wrap;html=1;fillColor=#E11D48;strokeColor=#BE123C;fontColor=#FFFFFF;fontStyle=1;align=center;" vertex="1" parent="layer_storage">
+          <mxGeometry x="40" y="695" width="300" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="xray_traces" value="AWS X-Ray Distributed Tracing&#xa;🔍 End-to-end Tracing Segments:&#xa;Webhook, Strands Agent, Bedrock, DynamoDB" style="shape=mxgraph.aws4.x_ray;whiteSpace=wrap;html=1;fillColor=#475569;strokeColor=#334155;fontColor=#FFFFFF;fontStyle=1;align=center;" vertex="1" parent="layer_storage">
+          <mxGeometry x="40" y="820" width="300" height="85" as="geometry" />
+        </mxCell>
+
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <!-- CONNECTIONS & DATA FLOWS                                         -->
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <mxCell id="flow_1" value="1. WhatsApp Message / Photo" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#10B981;strokeWidth=2;fontColor=#10B981;" edge="1" parent="1" source="parent_user" target="meta_cloud">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow_2" value="2. Inbound Webhook" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#38BDF8;strokeWidth=2;fontColor=#38BDF8;" edge="1" parent="1" source="meta_cloud" target="api_gw_webhook">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow_3" value="3. Verify HMAC-SHA256" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#38BDF8;strokeWidth=2;fontColor=#38BDF8;" edge="1" parent="1" source="api_gw_webhook" target="sig_validator">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow_4" value="4. Mask PII" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#38BDF8;strokeWidth=2;fontColor=#38BDF8;" edge="1" parent="1" source="sig_validator" target="pii_sanitizer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow_5" value="5. Asynchronous Agent Stream / Workflow" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#818CF8;strokeWidth=2;fontColor=#818CF8;" edge="1" parent="1" source="pii_sanitizer" target="strands_core">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow_6" value="6. Agent Tool Call" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#60A5FA;strokeWidth=2;fontColor=#60A5FA;" edge="1" parent="1" source="strands_core" target="tool_search">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow_7" value="7. Query Inventory" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#34D399;strokeWidth=2;fontColor=#34D399;" edge="1" parent="1" source="tool_search" target="dynamo_inventory">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow_8" value="8. Put Demand Wishlist" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#34D399;strokeWidth=2;fontColor=#34D399;" edge="1" parent="1" source="tool_create_demand" target="dynamo_demand">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow_9" value="9. Proactive Match &amp; 48H Hold" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#10B981;strokeWidth=2;fontColor=#10B981;" edge="1" parent="1" source="matchmaker_engine" target="dynamo_inventory">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow_10" value="10. Outbound WhatsApp Match Alert" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=2;fontColor=#2563EB;" edge="1" parent="1" source="outbound_dispatcher" target="meta_cloud">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow_11" value="11. Realtime Token Chunks" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#06B6D4;strokeWidth=2;fontColor=#06B6D4;" edge="1" parent="1" source="strands_core" target="realtime_ws">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow_12" value="12. JSON-RPC Storefront &amp; Chat" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#A78BFA;strokeWidth=2;fontColor=#A78BFA;" edge="1" parent="1" source="web_frontend" target="api_gw_rpc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
