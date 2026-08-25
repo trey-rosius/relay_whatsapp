@@ -670,5 +670,31 @@ test('whatsapp interactive confirmation: builds 2-button confirmation prompt wit
   assert.ok(confirmPayloadFr.action.buttons[1].reply.title.includes('Annuler'), 'French cancel button title');
 });
 
+test('whatsapp interactive list: guarantees strictly unique row IDs even when items share generic concept', () => {
+  // Simulate Year 12 inventory where 4 distinct subjects share concept "Year12Books"
+  const year12Inventory = [
+    { title: 'Books for Year 12 Mathematics', conditionType: 'New', concept: 'Year12Mathematics' },
+    { title: 'Books for Year 12 Probability & Statistics', conditionType: 'New', concept: 'Year12Books' },
+    { title: 'Books for Year 12 General Textbooks', conditionType: 'Good', concept: 'Year12Books' },
+    { title: 'Books for Year 12 Further mathematics Coursebook', conditionType: 'New', concept: 'Year12Mathematics' },
+    { title: 'Books for Year 12 Chemistry', conditionType: 'New', concept: 'Year12Chemistry' },
+    { title: 'Books for Year 12 Physics', conditionType: 'New', concept: 'Year12Books' },
+  ];
+
+  const payload = buildInteractiveYearSubjectsPayload('Year 12', year12Inventory, 'en');
+  const rows = payload.action.sections[0].rows;
+
+  const rowIds = rows.map((r) => r.id);
+  const uniqueRowIds = new Set(rowIds);
+
+  assert.strictEqual(rowIds.length, uniqueRowIds.size, 'All row IDs in the interactive list must be strictly unique');
+  assert.strictEqual(rows.length, 6, 'Must contain all 6 distinct subjects');
+
+  for (const id of rowIds) {
+    assert.match(id, /^request_concept_[a-zA-Z0-9_]+$/, `Row ID "${id}" must be valid alphanumeric without spaces`);
+  }
+});
+
+
 
 

@@ -1758,6 +1758,21 @@ export function buildInteractiveCatalogPayload(
 
   const totalCount = activeBooks.length;
   const rows: WhatsAppInteractiveRow[] = [];
+  const seenYearIds = new Set<string>();
+
+  const addYearRow = (year: string, desc: string) => {
+    const cleanYear = year.replace(/[^a-zA-Z0-9_]/g, '');
+    let rowId = `browse_year_${cleanYear}`;
+    if (seenYearIds.has(rowId)) {
+      rowId = `${rowId}_${seenYearIds.size + 1}`;
+    }
+    seenYearIds.add(rowId);
+    rows.push({
+      id: rowId,
+      title: truncateWhatsAppText(year, 24),
+      description: truncateWhatsAppText(desc, 72),
+    });
+  };
 
   // WhatsApp Interactive List limit: MAX 10 rows across all sections
   if (sortedYears.length <= 10) {
@@ -1767,12 +1782,7 @@ export function buildInteractiveCatalogPayload(
       const moreCount = g.subjects.length > 3 ? '…' : '';
       const booksLabel = lang === 'fr' ? (g.count > 1 ? 'livres' : 'livre') : (g.count > 1 ? 'books' : 'book');
       const desc = `${g.count} ${booksLabel} • ${subjectsPreview}${moreCount}`;
-
-      rows.push({
-        id: `browse_year_${year}`,
-        title: truncateWhatsAppText(year, 24),
-        description: truncateWhatsAppText(desc, 72),
-      });
+      addYearRow(year, desc);
     }
   } else {
     // If more than 10 years, include top 9 and a grouped 10th row for overflow
@@ -1783,12 +1793,7 @@ export function buildInteractiveCatalogPayload(
       const moreCount = g.subjects.length > 3 ? '…' : '';
       const booksLabel = lang === 'fr' ? (g.count > 1 ? 'livres' : 'livre') : (g.count > 1 ? 'books' : 'book');
       const desc = `${g.count} ${booksLabel} • ${subjectsPreview}${moreCount}`;
-
-      rows.push({
-        id: `browse_year_${year}`,
-        title: truncateWhatsAppText(year, 24),
-        description: truncateWhatsAppText(desc, 72),
-      });
+      addYearRow(year, desc);
     }
 
     const remainingYears = sortedYears.slice(9);
@@ -1917,13 +1922,14 @@ export function buildInteractiveYearSubjectsPayload(
     const key = displaySubject.toLowerCase();
 
     if (!subjectsMap[key]) {
-      const fallbackConcept = targetYearNum !== null
-        ? normalizeConceptKey(`Year${targetYearNum}${displaySubject.replace(/\s+/g, '')}`)
-        : (book.concept || normalizeConceptKey(rawTitle));
+      const subjectSlug = displaySubject.replace(/[^a-zA-Z0-9]/g, '') || 'Books';
+      const cleanConceptKey = targetYearNum !== null
+        ? normalizeConceptKey(`Year${targetYearNum}${subjectSlug}`)
+        : normalizeConceptKey(`${yearLabel.replace(/[^a-zA-Z0-9]/g, '')}${subjectSlug}`);
 
       subjectsMap[key] = {
         displaySubject,
-        concept: (book.concept || fallbackConcept).replace(/[^a-zA-Z0-9_]/g, ''),
+        concept: cleanConceptKey.replace(/[^a-zA-Z0-9_]/g, ''),
         count: 0,
         conditions: [],
       };
@@ -1936,6 +1942,7 @@ export function buildInteractiveYearSubjectsPayload(
 
   const subjectEntries = Object.values(subjectsMap);
   const rows: WhatsAppInteractiveRow[] = [];
+  const seenSubjectRowIds = new Set<string>();
 
   const maxRows = Math.min(subjectEntries.length, 10);
   for (let i = 0; i < maxRows; i++) {
@@ -1944,8 +1951,15 @@ export function buildInteractiveYearSubjectsPayload(
     const badges = formatConditionBadges(item.conditions, lang);
     const desc = `${availableText}${badges}`;
 
+    let baseId = `request_concept_${item.concept}`;
+    let rowId = baseId;
+    if (seenSubjectRowIds.has(rowId)) {
+      rowId = `${baseId}_${i + 1}`;
+    }
+    seenSubjectRowIds.add(rowId);
+
     rows.push({
-      id: `request_concept_${item.concept.replace(/[^a-zA-Z0-9_]/g, '')}`,
+      id: rowId,
       title: truncateWhatsAppText(item.displaySubject, 24),
       description: truncateWhatsAppText(desc, 72),
     });
