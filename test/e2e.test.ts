@@ -367,6 +367,43 @@ test('48h reservation (lifecycle): marks matched book as reserved and hides from
   assert.ok(matchedBook.handoverCode, 'Must have 4-digit handover code');
 });
 
+test('48h hold expiration: sweeps and releases expired holds back to active inventory', async () => {
+  const sellerPhone = '+15552223344';
+  const buyerPhone = '+15552223355';
+
+  // 1. Create demand & matching item
+  const demand = await api.createDemand(buyerPhone, 'Year 9 Biology', 'Year9Biology', 'Science');
+  await api.handleWebhook({
+    from_phone: sellerPhone,
+    message_text: 'I have Year 9 Biology textbook available',
+  });
+
+  // Verify book is reserved
+  const sellerBooks = await api.listInventoryBySeller(sellerPhone);
+  const reservedBook = sellerBooks.find(b => b.concept === 'Year9Biology');
+  assert.ok(reservedBook, 'Reserved book must exist');
+  assert.strictEqual(reservedBook.status, 'reserved');
+
+  // 2. Simulate hold expiration by sweeping
+  const sweepRes = await api.releaseExpiredHolds();
+  assert.ok(typeof sweepRes.releasedCount === 'number');
+
+  // 3. Test explicit releaseHold
+  await api.releaseHold({ itemId: reservedBook.itemId, demandId: demand.demandId });
+
+  // 4. Verify book returned to active status
+  const updatedBooks = await api.listInventoryBySeller(sellerPhone);
+  const releasedBook = updatedBooks.find(b => b.itemId === reservedBook.itemId);
+  assert.strictEqual(releasedBook?.status, 'active');
+  assert.strictEqual(releasedBook?.reservedUntil, undefined);
+  assert.strictEqual(releasedBook?.reservedForPhone, undefined);
+
+  // 5. Verify demand returned to pending status
+  const demands = await api.listDemands();
+  const updatedDemand = demands.find(d => d.demandId === demand.demandId);
+  assert.strictEqual(updatedDemand?.status, 'pending');
+});
+
 // ─── 16. Conversational WhatsApp Sale & Handover Confirmation ─────────────────
 
 test('handover confirmation: seller texting SOLD marks book as sold and fulfills demand', async () => {

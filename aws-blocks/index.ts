@@ -24,6 +24,7 @@ import {
   FileBucket,
   Agent,
   BedrockModels,
+  CronJob,
 } from '@aws-blocks/blocks';
 import { z } from 'zod';
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
@@ -492,7 +493,7 @@ export interface S3VectorMetadata {
 
 export interface EventBridgeLifecycleEvent {
   eventId: string;
-  eventType: 'ProcessingStarted' | 'ExtractionComplete' | 'MatchFound' | 'InventoryAdded' | 'S3VectorIngested' | 'HandoverConfirmed';
+  eventType: 'ProcessingStarted' | 'ExtractionComplete' | 'MatchFound' | 'InventoryAdded' | 'S3VectorIngested' | 'HandoverConfirmed' | 'HoldExpired';
   timestamp: number;
   details: Record<string, any>;
 }
@@ -512,6 +513,90 @@ export function emitLifecycleEvent(
   lifecycleEventsMemoryStore.push(event);
   return event;
 }
+
+/**
+ * Sweeps and releases expired 48-hour reservations in DynamoDB tables.
+ * Returns held books to active circulation and resets matched demands to pending.
+ */
+export async function sweepExpiredHolds(): Promise<{ releasedCount: number; expiredItemIds: string[] }> {
+  const now = Date.now();
+  const allInventory = await Array.fromAsync(activeInventory.scan());
+  const expiredItems = allInventory.filter(
+    (i) => i.status === 'reserved' && ((i.reservedUntil && i.reservedUntil < now) || (!i.reservedUntil && i.createdAt && now - i.createdAt > 48 * 3600 * 1000))
+  );
+
+  const expiredItemIds: string[] = [];
+
+  for (const item of expiredItems) {
+    // 1. Release book back to active
+    await activeInventory.put({
+      ...item,
+      status: 'active',
+      reservedUntil: undefined,
+      reservedForPhone: undefined,
+      matchedDemandId: undefined,
+      handoverCode: undefined,
+    });
+    expiredItemIds.push(item.itemId);
+
+    // 2. Return matched demand back to pending status
+    if (item.matchedDemandId) {
+      const demand = await demandBoard.get({ demandId: item.matchedDemandId });
+      if (demand && demand.status === 'matched') {
+        await demandBoard.put({
+          ...demand,
+          status: 'pending',
+          matchedItemId: undefined,
+          handoverCode: undefined,
+          matchedAt: undefined,
+        });
+      }
+    }
+
+    emitLifecycleEvent('HoldExpired', {
+      itemId: item.itemId,
+      concept: item.concept,
+      releasedAt: now,
+    });
+  }
+
+  // Also sweep any stale matched demands whose hold has elapsed (>48h)
+  const allDemands = await Array.fromAsync(demandBoard.scan());
+  const staleDemands = allDemands.filter(
+    (d) =>
+      d.status === 'matched' &&
+      ((d.matchedAt && now - d.matchedAt > 48 * 3600 * 1000) || (!d.matchedAt && d.createdAt && now - d.createdAt > 48 * 3600 * 1000))
+  );
+  for (const demand of staleDemands) {
+    await demandBoard.put({
+      ...demand,
+      status: 'pending',
+      matchedItemId: undefined,
+      handoverCode: undefined,
+      matchedAt: undefined,
+    });
+  }
+
+  const totalReleased = expiredItems.length + staleDemands.length;
+  if (totalReleased > 0) {
+    metrics.emit('HoldExpiredCount', totalReleased, { unit: 'Count' });
+  }
+
+  return { releasedCount: totalReleased, expiredItemIds };
+}
+
+/**
+ * Automated AWS EventBridge CronJob running every 15 minutes.
+ * Ensures that if parents do not complete a book handover within 48 hours,
+ * the reserved hold is automatically released and returned to the school community.
+ */
+export const holdExpiryCron = new CronJob(scope, 'hold-expiry-cron', {
+  schedule: 'rate(15 minutes)',
+  description: 'Proactively sweeps and releases expired 48-hour holds on reserved books',
+  handler: async () => {
+    await sweepExpiredHolds();
+  },
+});
 
 // ─── 4. AWS Lambda Durable Functions (`withDurableExecution`) ─────────────────
 
@@ -2775,19 +2860,39 @@ Vous avez des livres ? Répondez avec des photos pour aider les parents en atten
     return { success: true, itemId: payload.itemId };
   },
 
-  /** Release 48H Hold back to active inventory */
-  async releaseHold(payload: { itemId: string }) {
-    const item = await activeInventory.get({ itemId: payload.itemId });
-    if (item) {
-      await activeInventory.put({
-        ...item,
-        status: 'active',
-        reservedUntil: undefined,
-        reservedForPhone: undefined,
-        matchedDemandId: undefined,
-      });
+  /** Proactively sweep and release all expired 48H holds */
+  async releaseExpiredHolds() {
+    return await sweepExpiredHolds();
+  },
+
+  /** Release 48H Hold back to active inventory and reset matching demand */
+  async releaseHold(payload: { itemId?: string; demandId?: string }) {
+    if (payload.itemId) {
+      const item = await activeInventory.get({ itemId: payload.itemId });
+      if (item) {
+        await activeInventory.put({
+          ...item,
+          status: 'active',
+          reservedUntil: undefined,
+          reservedForPhone: undefined,
+          matchedDemandId: undefined,
+          handoverCode: undefined,
+        });
+      }
     }
-    return { success: true, itemId: payload.itemId };
+    if (payload.demandId) {
+      const demand = await demandBoard.get({ demandId: payload.demandId });
+      if (demand && demand.status !== 'fulfilled') {
+        await demandBoard.put({
+          ...demand,
+          status: 'pending',
+          matchedItemId: undefined,
+          handoverCode: undefined,
+          matchedAt: undefined,
+        });
+      }
+    }
+    return { success: true, ...payload };
   },
 
   /** Security & Observability System Status */

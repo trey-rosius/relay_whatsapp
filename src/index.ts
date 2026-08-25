@@ -378,6 +378,13 @@ async function loadData() {
   isLoading = true;
   redraw();
   try {
+    // Proactively sweep any expired holds
+    try {
+      await api.releaseExpiredHolds();
+    } catch {
+      // Non-blocking in case of offline/local mock
+    }
+
     const [inv, dem, ev, sec, gaps] = await Promise.all([
       api.listInventory(),
       api.listDemands(),
@@ -1329,14 +1336,27 @@ function renderMatchedDemandsTab() {
     <div class="card">
       <div class="card-header">
         <div>
-          <h3>🤝 Matched Pairs & Successful Connections</h3>
+          <h3>🤝 Matched Pairs & 48-Hour Reservations</h3>
           <p style="margin:4px 0 0 0;font-size:0.9rem;color:var(--text-muted);">
-            Demands successfully connected with available books via the Proactive Bedrock Matchmaker (Sorted newest first).
+            Demands matched with available books. Holds automatically release after 48 hours if handover is not confirmed.
           </p>
         </div>
-        <button class="secondary sm" @click=${loadData}>
-          ${isLoading ? '⏳ Refreshing...' : '🔄 Refresh'}
-        </button>
+        <div style="display:flex;gap:8px;">
+          <button
+            class="secondary sm"
+            title="Proactively sweep and release all expired 48H holds"
+            @click=${async () => {
+              const res = await api.releaseExpiredHolds();
+              setBannerMessage(`🧹 Swept holds: ${res.releasedCount} expired hold(s) released back to active inventory.`);
+              await loadData();
+            }}
+          >
+            🧹 Sweep Expired Holds
+          </button>
+          <button class="secondary sm" @click=${loadData}>
+            ${isLoading ? '⏳ Refreshing...' : '🔄 Refresh'}
+          </button>
+        </div>
       </div>
 
       ${renderFilterToolbar(false)}
@@ -1345,9 +1365,9 @@ function renderMatchedDemandsTab() {
         ? html`
             <div class="empty-state">
               <div class="empty-state-icon">🤝</div>
-              <div class="empty-state-title">No matched pairs found yet</div>
+              <div class="empty-state-title">No active matched pairs found</div>
               <div class="empty-state-text">
-                When a seller lists a book that matches a waiting parent's wishlist, it will be displayed here in real time.
+                When a seller lists a book that matches a waiting parent's wishlist, it will be placed on a 48-hour hold and displayed here.
               </div>
               <div style="margin-top:12px;display:flex;gap:10px;">
                 <button
@@ -1364,15 +1384,28 @@ function renderMatchedDemandsTab() {
           `
         : html`
             <div class="items-grid">
-              ${matches.map(
-                m => html`
-                  <div class="item-card" style="border-left: 3px solid var(--success);">
+              ${matches.map(m => {
+                const matchTime = m.matchedAt || m.createdAt || Date.now();
+                const holdDurationMs = 48 * 60 * 60 * 1000;
+                const remainingMs = matchTime + holdDurationMs - Date.now();
+                const isExpired = m.status !== 'fulfilled' && remainingMs <= 0;
+                const remainingHours = Math.max(1, Math.ceil(remainingMs / (1000 * 60 * 60)));
+
+                return html`
+                  <div
+                    class="item-card"
+                    style="border-left: 3px solid ${m.status === 'fulfilled' ? 'var(--success)' : isExpired ? '#ef4444' : '#6366f1'};"
+                  >
                     <div class="item-card-header">
                       <div class="item-title-wrap">
                         <div class="book-title">${m.requestedQuery}</div>
                         <div class="book-concept">Concept: ${m.concept}</div>
                       </div>
-                      <span class="badge badge-matched">${m.status === 'fulfilled' ? 'COMPLETED / SOLD' : '48H HOLD'}</span>
+                      ${m.status === 'fulfilled'
+                        ? html`<span class="badge" style="background:rgba(16,185,129,0.15);color:#34d399;border:1px solid rgba(16,185,129,0.35);">COMPLETED / SOLD</span>`
+                        : isExpired
+                        ? html`<span class="badge" style="background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.35);">HOLD EXPIRED</span>`
+                        : html`<span class="badge badge-matched">48H HOLD (${remainingHours}h left)</span>`}
                     </div>
 
                     <div class="tags-row">
@@ -1384,10 +1417,18 @@ function renderMatchedDemandsTab() {
                         : ''}
                     </div>
 
-                    <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);padding:10px 12px;border-radius:8px;font-size:0.83rem;color:#6ee7b7;">
+                    <div
+                      style="background:${m.status === 'fulfilled'
+                        ? 'rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);color:#6ee7b7;'
+                        : isExpired
+                        ? 'rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);color:#fca5a5;'
+                        : 'rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);color:#a5b4fc;'};padding:10px 12px;border-radius:8px;font-size:0.83rem;"
+                    >
                       ${m.status === 'fulfilled'
                         ? 'Handover completed! Book marked as sold and removed from active catalog.'
-                        : '48-Hour Reservation Active. Matched parents introduced via WhatsApp.'}
+                        : isExpired
+                        ? '⚠️ 48-Hour hold has elapsed without physical exchange. Book can be returned to community circulation.'
+                        : `⏳ 48-Hour Reservation Active (${remainingHours}h remaining). Matched parents introduced via WhatsApp.`}
                     </div>
 
                     <div class="card-footer">
@@ -1416,6 +1457,22 @@ function renderMatchedDemandsTab() {
                               </button>
                             `
                           : ''}
+                        ${isExpired
+                          ? html`
+                              <button
+                                class="secondary sm"
+                                style="font-size:0.72rem;padding:4px 8px;"
+                                title="Release expired hold back to active community inventory"
+                                @click=${async () => {
+                                  await api.releaseHold({ itemId: m.matchedItemId, demandId: m.demandId });
+                                  setBannerMessage('Hold released! Book returned to active catalog.');
+                                  await loadData();
+                                }}
+                              >
+                                🔄 Release Hold
+                              </button>
+                            `
+                          : ''}
                         <button
                           class="danger sm"
                           style="font-size:0.72rem;padding:4px 8px;"
@@ -1427,8 +1484,8 @@ function renderMatchedDemandsTab() {
                       </div>
                     </div>
                   </div>
-                `
-              )}
+                `;
+              })}
             </div>
           `}
     </div>
