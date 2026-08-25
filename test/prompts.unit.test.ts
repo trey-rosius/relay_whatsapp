@@ -14,6 +14,8 @@ import {
   truncateWhatsAppText,
   cleanSubjectName,
   inferDomainFromConcept,
+  formatDemandDisplay,
+  parseParentMessageIntentsWithLLM,
 } from '../aws-blocks/index.js';
 
 // Helper to compute SHA-256 digest
@@ -694,6 +696,46 @@ test('whatsapp interactive list: guarantees strictly unique row IDs even when it
     assert.match(id, /^request_concept_[a-zA-Z0-9_]+$/, `Row ID "${id}" must be valid alphanumeric without spaces`);
   }
 });
+
+test('whatsapp language routing: "catalogue" message automatically routes to French', async () => {
+  const intents = await parseParentMessageIntentsWithLLM('catalogue');
+  assert.strictEqual(intents.length, 1);
+  assert.strictEqual(intents[0].intent, 'catalog');
+  assert.strictEqual(intents[0].lang, 'fr', 'Must detect French language for "catalogue"');
+});
+
+test('whatsapp wishlist routing: "demande" and "demandes" route to demand_board in French', async () => {
+  const singularIntents = await parseParentMessageIntentsWithLLM('demande');
+  assert.strictEqual(singularIntents.length, 1);
+  assert.strictEqual(singularIntents[0].intent, 'demand_board');
+  assert.strictEqual(singularIntents[0].lang, 'fr', 'Must route "demande" to French demand board');
+
+  const pluralIntents = await parseParentMessageIntentsWithLLM('demandes');
+  assert.strictEqual(pluralIntents.length, 1);
+  assert.strictEqual(pluralIntents[0].intent, 'demand_board');
+  assert.strictEqual(pluralIntents[0].lang, 'fr', 'Must route "demandes" to French demand board');
+});
+
+test('whatsapp translation: auto-translates book subjects and demands based on user language', () => {
+  assert.strictEqual(cleanSubjectName('Mathematics', 'fr'), 'Mathématiques');
+  assert.strictEqual(cleanSubjectName('Mathématiques', 'en'), 'Mathematics');
+  assert.strictEqual(cleanSubjectName('Chemistry', 'fr'), 'Chimie');
+  assert.strictEqual(cleanSubjectName('Chimie', 'en'), 'Chemistry');
+  assert.strictEqual(cleanSubjectName('Physics', 'fr'), 'Physique');
+  assert.strictEqual(cleanSubjectName('Computing', 'fr'), 'Informatique');
+  assert.strictEqual(cleanSubjectName('Global Perspectives', 'fr'), 'Perspectives Globales');
+  assert.strictEqual(cleanSubjectName('Social Studies', 'fr'), 'Études Sociales');
+
+  // Test formatDemandDisplay for wishlist books
+  const demand1 = { concept: 'Year8Science', requestedQuery: 'Looking for Year 8 Science' };
+  assert.strictEqual(formatDemandDisplay(demand1, 'fr'), '• *Sciences* (Année 8)');
+  assert.strictEqual(formatDemandDisplay(demand1, 'en'), '• *Science* (Year 8)');
+
+  const demand2 = { concept: 'Year5Mathematics', requestedQuery: 'Livre de math 5e' };
+  assert.strictEqual(formatDemandDisplay(demand2, 'fr'), '• *Mathématiques* (Année 5)');
+  assert.strictEqual(formatDemandDisplay(demand2, 'en'), '• *Mathematics* (Year 5)');
+});
+
 
 
 

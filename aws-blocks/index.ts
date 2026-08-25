@@ -939,6 +939,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                   lastReplyMessage = catalogMessage;
                 }
               }
+              overallStatus = 'processed';
               return true;
             });
           });
@@ -952,15 +953,27 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
               if (openDemands.length === 0) {
                 const emptyMsg = await generateLLMMessage('demand_board_empty', { lang: item.lang });
                 await sendWhatsAppTextMessage(payload.from_phone, emptyMsg);
+                lastReplyMessage = emptyMsg;
               } else {
-                const uniqueRequests = Array.from(new Set(openDemands.map((d) => d.requestedQuery)));
-                const demandsText = uniqueRequests.map((t) => `- ${t}`).join('\n');
+                const formattedDemands = Array.from(
+                  new Set(openDemands.map((d) => formatDemandDisplay(d, item.lang)))
+                );
+                const demandsText = formattedDemands.join('\n');
                 const header =
                   item.lang === 'fr'
-                    ? 'Voici les livres recherchés par la communauté :'
-                    : 'Here are the books parents in the community are currently looking for:';
-                await sendWhatsAppTextMessage(payload.from_phone, `${header}\n\n${demandsText}`);
+                    ? `📋 *Livres Recherchés par les Parents (${formattedDemands.length})* :\n\nVoici les manuels demandés par notre communauté. Si vous possédez l'un de ces livres, décrivez-le ou envoyez une photo ! 👇`
+                    : `📋 *Books Wanted by Parents (${formattedDemands.length})* :\n\nHere are textbooks currently requested by the school community. If you have any of these, send a photo or description! 👇`;
+
+                const footer =
+                  item.lang === 'fr'
+                    ? `\n\n💡 Répondez avec *"J'ai [Matière/Année]"* pour le mettre à disposition !`
+                    : `\n\n💡 Reply with *"I have [Subject/Year]"* to list it for a parent!`;
+
+                const fullMessage = `${header}\n\n${demandsText}${footer}`;
+                await sendWhatsAppTextMessage(payload.from_phone, fullMessage);
+                lastReplyMessage = fullMessage;
               }
+              overallStatus = 'processed';
               return true;
             });
           });
@@ -1499,6 +1512,49 @@ export async function parseParentMessageIntentsWithLLM(text: string): Promise<Ex
       ];
     }
 
+    // Fast-path for main catalog requests ("catalog", "catalogue", "livres disponibles", "available books")
+    const isCatalogRequest =
+      /^(?:catalog|catalogue|livres?|livres disponibles|available books|books available|voir catalogue|show catalog)$/i.test(trimmed);
+
+    if (isCatalogRequest) {
+      const isFr = /\b(?:catalogue|livres?|disponibles?|voir)\b/i.test(trimmed);
+      const lang: 'en' | 'fr' = isFr ? 'fr' : 'en';
+      return [
+        {
+          intent: 'catalog',
+          lang,
+          concept: 'GeneralBooks',
+          title: isFr ? 'Catalogue' : 'Catalog',
+          domain: 'Science',
+          providerCategory: 'HighSchool',
+          conditionType: 'Good',
+          description: text,
+        },
+      ];
+    }
+
+    // Fast-path for demand board / parent wishlist requests ("demande", "demandes", "wishlist", "wanted", "livres recherches", "besoins")
+    const isDemandBoardRequest =
+      /^(?:demandes?|wishlist|wanted|livres recherch[ée]s|demandes des parents|recherches?|besoins?|wanted books|parents looking for)$/i.test(trimmed) ||
+      /\b(?:liste des demandes|livres demand[ée]s|demandes actuelles|open requests)\b/i.test(trimmed);
+
+    if (isDemandBoardRequest) {
+      const isFr = /\b(?:demandes?|recherch[ée]s?|besoins?|actuelles?|liste)\b/i.test(trimmed);
+      const lang: 'en' | 'fr' = isFr ? 'fr' : 'en';
+      return [
+        {
+          intent: 'demand_board',
+          lang,
+          concept: 'GeneralBooks',
+          title: isFr ? 'Demandes des Parents' : 'Parent Wishlist',
+          domain: 'Science',
+          providerCategory: 'HighSchool',
+          conditionType: 'Good',
+          description: text,
+        },
+      ];
+    }
+
     // Anonymize in-prompt PII
     const sanitizedText = maskPromptPII(text);
     segment.addAnnotation('originalTextLength', text.length);
@@ -1662,20 +1718,56 @@ export function inferDomainFromConcept(concept: string): (typeof DOMAIN_TYPES)[n
 
 export function cleanSubjectName(rawSubject: string, lang: 'en' | 'fr'): string {
   let clean = rawSubject.trim();
-  clean = clean.replace(/^(?:Books for Year|Livres pour l'année|Year|Année)\s*\d{1,2}\s*/i, '').trim();
-  clean = clean.replace(/^(?:Books|Livres)\s*(?:for|pour|de|d')?\s*/i, '').trim();
+  clean = clean.replace(/^(?:Books for Year|Livres pour l'année|Livres de|Livres d'|Books for|Books of|Year|Année)\s*\d{1,2}\s*/i, '').trim();
+  clean = clean.replace(/^(?:Books|Livres)\s*(?:for|pour|de|d'|in)?\s*/i, '').trim();
   clean = clean.replace(/^(?:for|pour|de|d')\s+/i, '').trim();
-  if (!clean) {
+  if (!clean || /^books?$|^livres?$/i.test(clean)) {
     return lang === 'fr' ? 'Livres généraux' : 'General Textbooks';
   }
   const lower = clean.toLowerCase();
-  if (lower === 'science') return 'Science';
-  if (lower === 'chemistry' || lower === 'chimie') return lang === 'fr' ? 'Chimie' : 'Chemistry';
-  if (lower === 'math' || lower === 'mathematics' || lower === 'maths') return lang === 'fr' ? 'Mathématiques' : 'Mathematics';
-  if (lower === 'english' || lower === 'anglais') return lang === 'fr' ? 'Anglais' : 'English';
-  if (lower === 'physics' || lower === 'physique') return lang === 'fr' ? 'Physique' : 'Physics';
+  if (lower.includes('further math')) return lang === 'fr' ? 'Mathématiques Complémentaires' : 'Further Mathematics';
+  if (lower.includes('chimie') || lower.includes('chemistry')) return lang === 'fr' ? 'Chimie' : 'Chemistry';
+  if (lower.includes('math')) return lang === 'fr' ? 'Mathématiques' : 'Mathematics';
+  if (lower.includes('physiq') || lower.includes('physic')) return lang === 'fr' ? 'Physique' : 'Physics';
+  if (lower.includes('biolog')) return lang === 'fr' ? 'Biologie' : 'Biology';
+  if (lower.includes('anglais') || lower.includes('english')) return lang === 'fr' ? 'Anglais' : 'English';
+  if (lower.includes('français') || lower.includes('francais') || lower.includes('french')) return lang === 'fr' ? 'Français' : 'French';
+  if (lower.includes('comput') || lower.includes('informatiq') || lower.includes('coding')) return lang === 'fr' ? 'Informatique' : 'Computing';
+  if (lower.includes('global perspective') || lower.includes('perspectives globales')) return lang === 'fr' ? 'Perspectives Globales' : 'Global Perspectives';
+  if (lower.includes('social stud') || lower.includes('études sociales') || lower.includes('etudes sociales')) return lang === 'fr' ? 'Études Sociales' : 'Social Studies';
+  if (lower.includes('histor') || lower.includes('histoire')) return lang === 'fr' ? 'Histoire' : 'History';
+  if (lower.includes('geograph') || lower.includes('géographie') || lower.includes('geographie')) return lang === 'fr' ? 'Géographie' : 'Geography';
+  if (lower.includes('econom') || lower.includes('économie') || lower.includes('economie')) return lang === 'fr' ? 'Économie' : 'Economics';
+  if (lower.includes('science')) return lang === 'fr' ? 'Sciences' : 'Science';
+  if (lower.includes('probability') || lower.includes('probabilit')) return lang === 'fr' ? 'Probabilités & Stats' : 'Probability & Statistics';
+  if (lower.includes('general') || lower.includes('général') || lower.includes('general textbook')) return lang === 'fr' ? 'Livres généraux' : 'General Textbooks';
 
   return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+export function formatDemandDisplay(
+  demand: { concept?: string; requestedQuery?: string; domain?: string; [key: string]: any },
+  lang: 'en' | 'fr'
+): string {
+  const concept = demand.concept || '';
+  const query = demand.requestedQuery || '';
+
+  // Extract year if available
+  const yearMatch = concept.match(/(?:Year|Année)\s*(\d{1,2})/i) || query.match(/(?:Year|Année)\s*(\d{1,2})/i);
+  const yearNum = yearMatch ? yearMatch[1] : null;
+  const yearStr = yearNum ? (lang === 'fr' ? `Année ${yearNum}` : `Year ${yearNum}`) : '';
+
+  // Extract raw subject from query or concept
+  let rawSubject = query.replace(/(?:Looking for|Je cherche|I need|Recherche|Books for Year|Livres pour l'année|Year|Année)\s*\d{1,2}/gi, '').trim();
+  if (!rawSubject || /^textbooks?$|^books?$|^livres?$/i.test(rawSubject)) {
+    rawSubject = concept.replace(/^(?:Year\d{1,2}|General)/i, '') || query;
+  }
+  const displaySubject = cleanSubjectName(rawSubject, lang);
+
+  if (yearStr) {
+    return `• *${displaySubject}* (${yearStr})`;
+  }
+  return `• *${displaySubject}*`;
 }
 
 export function formatConditionBadges(conditions: string[], lang: 'en' | 'fr'): string {

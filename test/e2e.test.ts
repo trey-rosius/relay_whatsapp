@@ -579,6 +579,42 @@ test('whatsapp catalog text fast-path: user typing "Year 3" receives interactive
   assert.ok(res.result.replyMessage?.includes('Year 3') || res.result.replyMessage?.includes('Année 3'));
 });
 
+test('whatsapp bilingual catalog: user typing "catalogue" receives French interactive list message', async () => {
+  const buyer = '+15557775555';
+  const res = await api.handleWebhook({
+    from_phone: buyer,
+    message_text: 'catalogue',
+  });
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.result.status, 'processed');
+  // Verify that the response message contains French catalog keywords
+  assert.ok(/livres|communaut[ée]|catalogue|ann[ée]e/i.test(res.result.replyMessage || ''));
+});
+
+test('whatsapp demand board: user typing "demandes" receives translated French list of wanted books', async () => {
+  const buyer1 = '+15557776661';
+  const parentInquiring = '+15557776662';
+
+  // 1. Create an open demand for a book in English that has no inventory (Year 11 Astronomy)
+  await api.handleWebhook({
+    from_phone: buyer1,
+    message_text: 'Looking for Year 11 Astronomy',
+  });
+
+  // 2. French parent sends "demandes"
+  const res = await api.handleWebhook({
+    from_phone: parentInquiring,
+    message_text: 'demandes',
+  });
+
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.result.status, 'processed');
+  // Verify that the response contains French demand board header and guidance
+  assert.ok(res.result.replyMessage?.includes('Livres Recherchés par les Parents') || res.result.replyMessage?.includes('demandés'));
+  assert.ok(res.result.replyMessage?.includes('💡') || res.result.replyMessage?.includes('Matière') || res.result.replyMessage?.includes('Année'));
+});
+
+
 
 
 
