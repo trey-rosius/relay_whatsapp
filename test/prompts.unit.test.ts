@@ -10,6 +10,7 @@ import {
   formatConditionBadges,
   buildInteractiveCatalogPayload,
   buildInteractiveYearSubjectsPayload,
+  buildInteractiveRequestConfirmationPayload,
   truncateWhatsAppText,
   cleanSubjectName,
   inferDomainFromConcept,
@@ -645,5 +646,29 @@ test('whatsapp interactive helpers: string truncation and domain inference handl
   assert.strictEqual(inferDomainFromConcept('Year7English'), 'Languages');
   assert.strictEqual(inferDomainFromConcept('Year9History'), 'Humanities');
 });
+
+test('whatsapp interactive confirmation: builds 2-button confirmation prompt with book details', () => {
+  const mockInventory = [
+    { title: 'Books for Year 3 Mathematics', conditionType: 'LikeNew', concept: 'Year3Mathematics' },
+  ];
+
+  const confirmPayloadEn = buildInteractiveRequestConfirmationPayload('request_concept_Year3Mathematics', mockInventory, 'en');
+  assert.strictEqual(confirmPayloadEn.type, 'button');
+  assert.ok(confirmPayloadEn.header?.text.includes('Confirm'), 'Header must reference Confirm');
+  assert.ok(confirmPayloadEn.body.text.includes('Mathematics (Year 3)'), 'Body must show book title and grade');
+  assert.ok(confirmPayloadEn.body.text.includes('Like New'), 'Body must show verified condition');
+  assert.strictEqual(confirmPayloadEn.action.buttons.length, 2, 'Must provide exactly 2 buttons: Confirm and Cancel');
+  assert.strictEqual(confirmPayloadEn.action.buttons[0].reply.id, 'confirm_req_Year3Mathematics');
+  assert.strictEqual(confirmPayloadEn.action.buttons[1].reply.id, 'cancel_request');
+  assert.ok(confirmPayloadEn.action.buttons[0].reply.title.length <= 20, 'Confirm button title <= 20 chars');
+  assert.ok(confirmPayloadEn.action.buttons[1].reply.title.length <= 20, 'Cancel button title <= 20 chars');
+
+  const confirmPayloadFr = buildInteractiveRequestConfirmationPayload('request_concept_Year3Mathematics', mockInventory, 'fr');
+  assert.ok(confirmPayloadFr.body.text.includes('Mathématiques (Année 3)'), 'French body must localize subject and year');
+  assert.ok(confirmPayloadFr.body.text.includes('Comme Neuf'), 'French body must localize condition');
+  assert.ok(confirmPayloadFr.action.buttons[0].reply.title.includes('Confirmer'), 'French confirm button title');
+  assert.ok(confirmPayloadFr.action.buttons[1].reply.title.includes('Annuler'), 'French cancel button title');
+});
+
 
 

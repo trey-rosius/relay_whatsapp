@@ -654,6 +654,61 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
             vectorChunksCount: 0,
           };
         }
+
+        // 3. User taps a book subject in the list -> Dispatch Confirmation Prompt
+        if (interactiveId.startsWith('request_concept_') || interactiveId.startsWith('request_book_')) {
+          const allInventory = await Array.fromAsync(activeInventory.scan());
+          const now = Date.now();
+          const activeBooks = allInventory.filter(
+            (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
+          );
+
+          const isFr = /chimie|math[ée]matiques|anglais|physique|livres|ann[ée]e/i.test(interactiveTitle) || /ann[ée]e/i.test(interactiveId);
+          const lang: 'en' | 'fr' = isFr ? 'fr' : 'en';
+
+          const confirmPayload = buildInteractiveRequestConfirmationPayload(interactiveId, activeBooks, lang);
+          const sendRes = await sendWhatsAppInteractiveMessage(payload.from_phone, confirmPayload);
+
+          if (!sendRes) {
+            const cleanConcept = interactiveId.replace(/^(?:request_concept_|request_book_)/, '');
+            const fallbackText =
+              lang === 'fr'
+                ? `Souhaitez-vous demander *${interactiveTitle || cleanConcept}* ? Répondez 'OUI' pour confirmer.`
+                : `Do you want to request *${interactiveTitle || cleanConcept}*? Reply 'YES' to confirm.`;
+            await sendWhatsAppTextMessage(payload.from_phone, fallbackText);
+          }
+
+          const duration = Date.now() - startTime;
+          metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'confirmation_prompt_sent' } });
+
+          return {
+            status: 'needs_year_clarification' as any,
+            replyMessage: 'Confirmation prompt sent',
+            extractedIntentsCount: 1,
+            vectorChunksCount: 0,
+          };
+        }
+
+        // 4. User taps Cancel Button
+        if (interactiveId === 'cancel_request') {
+          const isFr = /annuler/i.test(interactiveTitle);
+          const lang: 'en' | 'fr' = isFr ? 'fr' : 'en';
+          const cancelMsg =
+            lang === 'fr'
+              ? '👍 Pas de problème ! Demande annulée. Envoyez "catalogue" pour explorer à nouveau. 😊'
+              : '👍 No problem! Request cancelled. Send "catalog" anytime to browse again. 😊';
+          await sendWhatsAppTextMessage(payload.from_phone, cancelMsg);
+
+          const duration = Date.now() - startTime;
+          metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'request_cancelled' } });
+
+          return {
+            status: 'processed',
+            replyMessage: cancelMsg,
+            extractedIntentsCount: 1,
+            vectorChunksCount: 0,
+          };
+        }
       }
 
       // Step 2: Vision & Text Extraction via Amazon Bedrock
@@ -661,12 +716,14 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         return await tracer.startSegment('step_bedrock_extraction', async () => {
           if (
             payload.interactive?.id &&
-            (payload.interactive.id.startsWith('request_concept_') || payload.interactive.id.startsWith('request_book_'))
+            (payload.interactive.id.startsWith('confirm_req_') ||
+              payload.interactive.id.startsWith('request_concept_') ||
+              payload.interactive.id.startsWith('request_book_'))
           ) {
-            const rawConcept = payload.interactive.id.replace(/^(?:request_concept_|request_book_)/, '');
+            const rawConcept = payload.interactive.id.replace(/^(?:confirm_req_|request_concept_|request_book_)/, '');
             const normConcept = normalizeConceptKey(rawConcept);
             const title = payload.interactive.title || rawConcept;
-            const isFr = /chimie|math[ée]matiques|anglais|physique|livres|ann[ée]e/i.test(title);
+            const isFr = /chimie|math[ée]matiques|anglais|physique|livres|ann[ée]e|confirmer/i.test(title);
             const lang = isFr ? 'fr' : 'en';
 
             return [
@@ -678,7 +735,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                 domain: inferDomainFromConcept(normConcept),
                 providerCategory: 'HighSchool' as const,
                 conditionType: 'Good' as const,
-                description: `Requested via WhatsApp Interactive List: ${title}`,
+                description: `Confirmed request via WhatsApp: ${title}`,
               },
             ];
           }
@@ -1961,6 +2018,83 @@ export function buildInteractiveYearSubjectsPayload(
         {
           title: sectionTitle,
           rows,
+        },
+      ],
+    },
+  };
+}
+
+export function buildInteractiveRequestConfirmationPayload(
+  conceptKey: string,
+  activeBooks: Array<{ title: string; concept?: string; conditionType?: string; domain?: string; [key: string]: any }>,
+  lang: 'en' | 'fr' = 'en'
+): WhatsAppInteractiveButtonPayload {
+  const cleanConcept = conceptKey.replace(/^(?:request_concept_|confirm_req_)/, '').replace(/[^a-zA-Z0-9_]/g, '');
+
+  // Find matching book in inventory to get title & verified condition
+  const matchedBook = activeBooks.find(
+    (b) =>
+      (b.concept && b.concept.replace(/[^a-zA-Z0-9_]/g, '') === cleanConcept) ||
+      normalizeConceptKey(b.title || '').replace(/[^a-zA-Z0-9_]/g, '') === cleanConcept
+  );
+
+  const yearMatch = cleanConcept.match(/Year(\d{1,2})/i);
+  const yearStr = yearMatch ? (lang === 'fr' ? `Année ${yearMatch[1]}` : `Year ${yearMatch[1]}`) : '';
+  const rawSubject = cleanConcept.replace(/^(?:Year\d{1,2}|General)/i, '');
+  const displaySubject = cleanSubjectName(rawSubject, lang);
+
+  const fullBookName = yearStr ? `${displaySubject} (${yearStr})` : displaySubject;
+  const conditionBadge = matchedBook?.conditionType
+    ? lang === 'fr'
+      ? matchedBook.conditionType === 'New'
+        ? 'Neuf'
+        : matchedBook.conditionType === 'LikeNew'
+        ? 'Comme Neuf'
+        : 'Bon État'
+      : matchedBook.conditionType === 'LikeNew'
+      ? 'Like New'
+      : matchedBook.conditionType
+    : lang === 'fr'
+    ? 'Bon État'
+    : 'Good';
+
+  const headerText = lang === 'fr' ? '📖 Confirmation de Demande' : '📖 Confirm Book Request';
+  const bodyText =
+    lang === 'fr'
+      ? `Vous avez sélectionné : *${fullBookName}*\nÉtat vérifié : *${conditionBadge}*\n\nSouhaitez-vous confirmer cette demande ? Nous vous mettrons en relation directe avec le parent propriétaire pour la remise.`
+      : `You selected: *${fullBookName}*\nVerified Condition: *${conditionBadge}*\n\nAre you sure you want to request this textbook? We will connect you directly with the owner for handover.`;
+
+  const footerText = lang === 'fr' ? 'Relay • Échange Scolaire' : 'Relay • Community Exchange';
+  const confirmBtnText = lang === 'fr' ? '✅ Confirmer' : '✅ Confirm Request';
+  const cancelBtnText = lang === 'fr' ? '❌ Annuler' : '❌ Cancel';
+
+  return {
+    type: 'button',
+    header: {
+      type: 'text',
+      text: truncateWhatsAppText(headerText, 60),
+    },
+    body: {
+      text: truncateWhatsAppText(bodyText, 1024),
+    },
+    footer: {
+      text: truncateWhatsAppText(footerText, 60),
+    },
+    action: {
+      buttons: [
+        {
+          type: 'reply',
+          reply: {
+            id: `confirm_req_${cleanConcept}`,
+            title: truncateWhatsAppText(confirmBtnText, 20),
+          },
+        },
+        {
+          type: 'reply',
+          reply: {
+            id: 'cancel_request',
+            title: truncateWhatsAppText(cancelBtnText, 20),
+          },
         },
       ],
     },

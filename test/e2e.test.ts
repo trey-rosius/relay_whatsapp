@@ -462,8 +462,8 @@ test('whatsapp interactive list: 1-tap book request via list_reply auto-matches 
     message_text: 'Year 5 Mathematics textbook in new condition',
   });
 
-  // Buyer taps "Mathematics" from the interactive list
-  const res = await api.handleWebhook({
+  // Buyer taps "Mathematics" from the interactive list -> Receives Confirmation Prompt
+  const promptRes = await api.handleWebhook({
     from_phone: buyerPhone,
     interactive: {
       type: 'list_reply',
@@ -473,12 +473,25 @@ test('whatsapp interactive list: 1-tap book request via list_reply auto-matches 
     },
   });
 
-  assert.strictEqual(res.success, true);
-  assert.strictEqual(res.result.status, 'matched');
-  assert.ok(res.result.matchedDemandId, 'Must generate and match a demand');
+  assert.strictEqual(promptRes.success, true);
+  assert.ok(promptRes.result.replyMessage?.includes('Confirmation prompt sent'));
+
+  // Buyer taps "Confirm Request" button -> Executes matchmaking
+  const confirmRes = await api.handleWebhook({
+    from_phone: buyerPhone,
+    interactive: {
+      type: 'button_reply',
+      id: 'confirm_req_Year5Mathematics',
+      title: '✅ Confirm Request',
+    },
+  });
+
+  assert.strictEqual(confirmRes.success, true);
+  assert.strictEqual(confirmRes.result.status, 'matched');
+  assert.ok(confirmRes.result.matchedDemandId, 'Must generate and match a demand');
 });
 
-test('whatsapp interactive list: full 3-step interactive journey (catalog -> select year -> 1-tap request -> handover)', async () => {
+test('whatsapp interactive list: full 4-step interactive journey (catalog -> select year -> tap book -> confirm -> handover)', async () => {
   const seller = '+15557771111';
   const buyer = '+15557772222';
 
@@ -508,13 +521,24 @@ test('whatsapp interactive list: full 3-step interactive journey (catalog -> sel
   assert.strictEqual(yearRes.success, true);
   assert.strictEqual(yearRes.result.status, 'processed');
 
-  // Step 4: Buyer taps Science to request in 1-tap
-  const requestRes = await api.handleWebhook({
+  // Step 4a: Buyer taps Science -> receives confirmation prompt
+  const tapRes = await api.handleWebhook({
     from_phone: buyer,
     interactive: {
       type: 'list_reply',
       id: 'request_concept_Year3Science',
       title: 'Science',
+    },
+  });
+  assert.strictEqual(tapRes.success, true);
+
+  // Step 4b: Buyer confirms request
+  const requestRes = await api.handleWebhook({
+    from_phone: buyer,
+    interactive: {
+      type: 'button_reply',
+      id: 'confirm_req_Year3Science',
+      title: '✅ Confirm Request',
     },
   });
   assert.strictEqual(requestRes.success, true);
@@ -527,6 +551,21 @@ test('whatsapp interactive list: full 3-step interactive journey (catalog -> sel
   });
   assert.strictEqual(soldRes.success, true);
   assert.strictEqual(soldRes.result.status, 'processed');
+});
+
+test('whatsapp interactive confirmation: user tapping cancel cancels request cleanly', async () => {
+  const buyer = '+15557774444';
+  const cancelRes = await api.handleWebhook({
+    from_phone: buyer,
+    interactive: {
+      type: 'button_reply',
+      id: 'cancel_request',
+      title: '❌ Cancel',
+    },
+  });
+  assert.strictEqual(cancelRes.success, true);
+  assert.strictEqual(cancelRes.result.status, 'processed');
+  assert.ok(cancelRes.result.replyMessage?.includes('Request cancelled') || cancelRes.result.replyMessage?.includes('annulée'));
 });
 
 test('whatsapp catalog text fast-path: user typing "Year 3" receives interactive year subjects', async () => {
