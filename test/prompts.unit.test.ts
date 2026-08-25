@@ -607,6 +607,26 @@ test('whatsapp interactive list: enforces Meta constraints on year drill-down su
   assert.ok(chemRow.description?.includes('Like New'), 'Chemistry condition badge must be included');
 });
 
+test('whatsapp interactive list: body text includes formatted summary bullets for fast readability', () => {
+  const mockInventory = [
+    { title: 'Books for Year 3 Mathematics', conditionType: 'New', concept: 'Year3Mathematics' },
+    { title: 'Books for Year 3 Science', conditionType: 'Good', concept: 'Year3Science' },
+    { title: 'Books for Year 3 English', conditionType: 'New', concept: 'Year3English' },
+    { title: 'Books for Year 3 General Textbooks', conditionType: 'Good', concept: 'Year3GeneralTextbooks' },
+  ];
+
+  const yearPayloadEn = buildInteractiveYearSubjectsPayload('Year 3', mockInventory, 'en');
+  assert.ok(yearPayloadEn.body.text.includes('• *Mathematics* (1 avail — New)'), 'Must include Mathematics summary');
+  assert.ok(yearPayloadEn.body.text.includes('• *Science* (1 avail — Good)'), 'Must include Science summary');
+  assert.ok(yearPayloadEn.body.text.includes('Tap *Select Book* below'), 'Must include tap instruction');
+  assert.ok(yearPayloadEn.body.text.length <= 1024, 'Body text must not exceed 1024 chars');
+
+  const yearPayloadFr = buildInteractiveYearSubjectsPayload('Année 3', mockInventory, 'fr');
+  assert.ok(yearPayloadFr.body.text.includes('• *Mathématiques* (1 dispo — Neuf)'), 'French summary must translate properly');
+  assert.ok(yearPayloadFr.body.text.includes('Choisir un livre'), 'French instruction must translate properly');
+  assert.ok(yearPayloadFr.body.text.length <= 1024, 'French body text must not exceed 1024 chars');
+});
+
 test('whatsapp interactive helpers: string truncation and domain inference handle edge cases', () => {
   const shortText = 'Mathematics';
   assert.strictEqual(truncateWhatsAppText(shortText, 24), 'Mathematics');
@@ -625,4 +645,5 @@ test('whatsapp interactive helpers: string truncation and domain inference handl
   assert.strictEqual(inferDomainFromConcept('Year7English'), 'Languages');
   assert.strictEqual(inferDomainFromConcept('Year9History'), 'Humanities');
 });
+
 

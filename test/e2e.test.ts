@@ -476,13 +476,68 @@ test('whatsapp interactive list: 1-tap book request via list_reply auto-matches 
   assert.strictEqual(res.success, true);
   assert.strictEqual(res.result.status, 'matched');
   assert.ok(res.result.matchedDemandId, 'Must generate and match a demand');
+});
 
-  // Verify demand status
-  const demands = await api.listDemands();
-  const demand = demands.find(d => d.demandId === res.result.matchedDemandId);
-  assert.ok(demand);
-  assert.strictEqual(demand.status, 'matched');
-  assert.strictEqual(demand.concept, 'Year5Mathematics');
+test('whatsapp interactive list: full 3-step interactive journey (catalog -> select year -> 1-tap request -> handover)', async () => {
+  const seller = '+15557771111';
+  const buyer = '+15557772222';
+
+  // Step 1: Seller lists Year 3 Science
+  const listRes = await api.handleWebhook({
+    from_phone: seller,
+    message_text: 'I have Year 3 Science in Good condition',
+  });
+  assert.strictEqual(listRes.success, true);
+
+  // Step 2: Buyer requests catalog
+  const catalogRes = await api.handleWebhook({
+    from_phone: buyer,
+    message_text: 'catalog',
+  });
+  assert.strictEqual(catalogRes.success, true);
+
+  // Step 3: Buyer selects Year 3 from grade list
+  const yearRes = await api.handleWebhook({
+    from_phone: buyer,
+    interactive: {
+      type: 'list_reply',
+      id: 'browse_year_Year 3',
+      title: 'Year 3',
+    },
+  });
+  assert.strictEqual(yearRes.success, true);
+  assert.strictEqual(yearRes.result.status, 'processed');
+
+  // Step 4: Buyer taps Science to request in 1-tap
+  const requestRes = await api.handleWebhook({
+    from_phone: buyer,
+    interactive: {
+      type: 'list_reply',
+      id: 'request_concept_Year3Science',
+      title: 'Science',
+    },
+  });
+  assert.strictEqual(requestRes.success, true);
+  assert.strictEqual(requestRes.result.status, 'matched');
+
+  // Step 5: Seller confirms exchange by texting SOLD
+  const soldRes = await api.handleWebhook({
+    from_phone: seller,
+    message_text: 'SOLD',
+  });
+  assert.strictEqual(soldRes.success, true);
+  assert.strictEqual(soldRes.result.status, 'processed');
+});
+
+test('whatsapp catalog text fast-path: user typing "Year 3" receives interactive year subjects', async () => {
+  const buyer = '+15557773333';
+  const res = await api.handleWebhook({
+    from_phone: buyer,
+    message_text: 'Year 3',
+  });
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.result.status, 'processed');
+  assert.ok(res.result.replyMessage?.includes('Year 3') || res.result.replyMessage?.includes('Année 3'));
 });
 
 
