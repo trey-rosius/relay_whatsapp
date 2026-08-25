@@ -315,6 +315,7 @@ export async function sendWhatsAppInteractiveMessage(toPhone: string, interactiv
       const data = await res.json();
       if (!res.ok) {
         console.error('[WhatsAppOutboundInteractiveError]', res.status, JSON.stringify(data));
+        return null;
       } else {
         console.log('[WhatsAppOutboundInteractiveSuccess]', JSON.stringify(data));
       }
@@ -591,10 +592,23 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
           );
 
           const isFr = /ann[ée]e|autre|fran[çc]ais/i.test(interactiveTitle) || /ann[ée]e/i.test(yearTarget);
-          const lang = isFr ? 'fr' : 'en';
+          const lang: 'en' | 'fr' = isFr ? 'fr' : 'en';
 
           const yearPayload = buildInteractiveYearSubjectsPayload(yearTarget, activeBooks, lang);
-          await sendWhatsAppInteractiveMessage(payload.from_phone, yearPayload);
+          const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, yearPayload);
+
+          if (!dispatchRes) {
+            const targetNumMatch = yearTarget.match(/\d{1,2}/);
+            const targetNum = targetNumMatch ? parseInt(targetNumMatch[0], 10) : null;
+            const filtered = activeBooks.filter((b) => {
+              const m = (b.title || '').match(/(?:Books for Year|Livres pour l'année|Year|Année)\s*(\d{1,2})/i) ||
+                        (b.concept || '').match(/(?:Year|Année)\s*(\d{1,2})/i);
+              if (targetNum !== null && m) return parseInt(m[1], 10) === targetNum;
+              return (b.title || '').toLowerCase().includes(yearTarget.toLowerCase()) || (b.concept || '').toLowerCase().includes(yearTarget.toLowerCase());
+            });
+            const yearText = buildGroupedCatalogText(filtered.length > 0 ? filtered : activeBooks, lang);
+            await sendWhatsAppTextMessage(payload.from_phone, yearText);
+          }
 
           const replyText = lang === 'fr' ? `Catalogue envoyé pour ${yearTarget}` : `Catalog sent for ${yearTarget}`;
           const duration = Date.now() - startTime;
@@ -840,14 +854,33 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                 await sendWhatsAppTextMessage(payload.from_phone, emptyMsg);
                 lastReplyMessage = emptyMsg;
               } else {
-                const catalogPayload = buildInteractiveCatalogPayload(activeBooks, item.lang);
-                const catalogMessage = buildGroupedCatalogText(activeBooks, item.lang);
+                const yearMatch = (item.title || '').match(/(?:Year|Année)\s*(\d{1,2})/i) || (item.concept || '').match(/(?:Year|Année)\s*(\d{1,2})/i);
+                if (yearMatch) {
+                  const targetYear = item.lang === 'fr' ? `Année ${yearMatch[1]}` : `Year ${yearMatch[1]}`;
+                  const yearPayload = buildInteractiveYearSubjectsPayload(targetYear, activeBooks, item.lang);
+                  const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, yearPayload);
+                  if (!dispatchRes) {
+                    const targetNum = parseInt(yearMatch[1], 10);
+                    const filtered = activeBooks.filter((b) => {
+                      const m = (b.title || '').match(/(?:Books for Year|Livres pour l'année|Year|Année)\s*(\d{1,2})/i) ||
+                                (b.concept || '').match(/(?:Year|Année)\s*(\d{1,2})/i);
+                      if (m) return parseInt(m[1], 10) === targetNum;
+                      return (b.title || '').toLowerCase().includes(targetYear.toLowerCase());
+                    });
+                    const yearText = buildGroupedCatalogText(filtered.length > 0 ? filtered : activeBooks, item.lang);
+                    await sendWhatsAppTextMessage(payload.from_phone, yearText);
+                  }
+                  lastReplyMessage = `Year ${yearMatch[1]} catalog sent`;
+                } else {
+                  const catalogPayload = buildInteractiveCatalogPayload(activeBooks, item.lang);
+                  const catalogMessage = buildGroupedCatalogText(activeBooks, item.lang);
 
-                const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, catalogPayload);
-                if (!dispatchRes) {
-                  await sendWhatsAppTextMessage(payload.from_phone, catalogMessage);
+                  const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, catalogPayload);
+                  if (!dispatchRes) {
+                    await sendWhatsAppTextMessage(payload.from_phone, catalogMessage);
+                  }
+                  lastReplyMessage = catalogMessage;
                 }
-                lastReplyMessage = catalogMessage;
               }
               return true;
             });
@@ -1386,6 +1419,29 @@ export async function parseParentMessageIntentsWithLLM(text: string): Promise<Ex
       ];
     }
 
+    // Fast-path for pure year catalog selection (e.g. "Year 5", "Année 5", "Year 5 books", or list reply forwarded as text)
+    const isYearOnlySelection =
+      /^(?:year|ann[ée]e|grade)\s*(\d{1,2})(?:\s*(?:books?|livres?|textbooks?|catalog|catalogue))?(?:\s*\n.*)?$/i.test(trimmed) &&
+      !/(?:chemistry|chimie|math|physic|biolog|english|anglais|science|comput|geograph|histor|french|fran[çc]ais|global|social|looking|need|have|j'ai|je cherche|vends|selling|vendu)/i.test(trimmed);
+
+    if (isYearOnlySelection) {
+      const yearMatch = trimmed.match(/^(?:year|ann[ée]e|grade)\s*(\d{1,2})/i);
+      const yearNum = yearMatch ? yearMatch[1] : '1';
+      const isFr = /\b(?:ann[ée]e|livres?)\b/i.test(trimmed);
+      return [
+        {
+          intent: 'catalog',
+          lang: isFr ? 'fr' : 'en',
+          concept: `Year${yearNum}Books`,
+          title: isFr ? `Livres Année ${yearNum}` : `Books for Year ${yearNum}`,
+          domain: 'Science',
+          providerCategory: 'HighSchool',
+          conditionType: 'Good',
+          description: text,
+        },
+      ];
+    }
+
     // Anonymize in-prompt PII
     const sanitizedText = maskPromptPII(text);
     segment.addAnnotation('originalTextLength', text.length);
@@ -1762,7 +1818,9 @@ export function buildInteractiveYearSubjectsPayload(
 
   const matchingBooks = activeBooks.filter((book) => {
     const rawTitle = book.title || '';
-    const match = rawTitle.match(/(?:Books for Year|Livres pour l'année|Year|Année)\s*(\d{1,2})/i);
+    const rawConcept = book.concept || '';
+    const match = rawTitle.match(/(?:Books for Year|Livres pour l'année|Year|Année)\s*(\d{1,2})/i) ||
+                  rawConcept.match(/(?:Year|Année)\s*(\d{1,2})/i);
     if (targetYearNum !== null) {
       if (match) {
         return parseInt(match[1], 10) === targetYearNum;
@@ -1772,7 +1830,7 @@ export function buildInteractiveYearSubjectsPayload(
     if (isOther) {
       return !match;
     }
-    return rawTitle.toLowerCase().includes(yearLabel.toLowerCase());
+    return rawTitle.toLowerCase().includes(yearLabel.toLowerCase()) || rawConcept.toLowerCase().includes(yearLabel.toLowerCase());
   });
 
   const subjectsMap: Record<
@@ -1782,8 +1840,12 @@ export function buildInteractiveYearSubjectsPayload(
 
   for (const book of matchingBooks) {
     const rawTitle = book.title || '';
+    const rawConcept = book.concept || '';
     const match = rawTitle.match(/(?:Books for Year|Livres pour l'année|Year|Année)\s*(\d{1,2})(.*)/i);
-    const rawSubject = match ? match[2] : rawTitle;
+    let rawSubject = match ? match[2] : rawTitle;
+    if (!rawSubject || rawSubject.trim() === '') {
+      rawSubject = rawConcept.replace(/^(?:Year\d{1,2}|General)/i, '') || rawTitle;
+    }
     const displaySubject = cleanSubjectName(rawSubject, lang);
     const key = displaySubject.toLowerCase();
 
@@ -1794,7 +1856,7 @@ export function buildInteractiveYearSubjectsPayload(
 
       subjectsMap[key] = {
         displaySubject,
-        concept: book.concept || fallbackConcept,
+        concept: (book.concept || fallbackConcept).replace(/[^a-zA-Z0-9_]/g, ''),
         count: 0,
         conditions: [],
       };
@@ -1816,7 +1878,7 @@ export function buildInteractiveYearSubjectsPayload(
     const desc = `${availableText}${badges}`;
 
     rows.push({
-      id: `request_concept_${item.concept}`,
+      id: `request_concept_${item.concept.replace(/[^a-zA-Z0-9_]/g, '')}`,
       title: truncateWhatsAppText(item.displaySubject, 24),
       description: truncateWhatsAppText(desc, 72),
     });
