@@ -8,6 +8,11 @@ import {
   maskPromptPII,
   buildGroupedCatalogText,
   formatConditionBadges,
+  buildInteractiveCatalogPayload,
+  buildInteractiveYearSubjectsPayload,
+  truncateWhatsAppText,
+  cleanSubjectName,
+  inferDomainFromConcept,
 } from '../aws-blocks/index.js';
 
 // Helper to compute SHA-256 digest
@@ -507,3 +512,117 @@ test('whatsapp catalog: formats verified condition and quality badges correctly 
   assert.ok(catalogTextFr.includes('Neuf'), 'French catalog must include Neuf condition');
   assert.ok(catalogTextFr.includes('Comme Neuf'), 'French catalog must include Comme Neuf condition');
 });
+
+// ─── 4. WhatsApp Interactive List Messages Unit Tests ────────────────────────
+
+test('whatsapp interactive list: enforces Meta constraints on top-level catalog list', () => {
+  const mockInventory = [
+    { title: 'Books for Year 1 General', conditionType: 'New' },
+    { title: 'Books for Year 3 Mathematics', conditionType: 'New' },
+    { title: 'Books for Year 3 Science', conditionType: 'Good' },
+    { title: 'Books for Year 4 Mathematics', conditionType: 'Good' },
+    { title: 'Books for Year 5 Chemistry', conditionType: 'LikeNew' },
+    { title: 'Books for Year 5 English', conditionType: 'New' },
+    { title: 'Books for Year 12 Mathematics', conditionType: 'New' },
+  ];
+
+  const payloadEn = buildInteractiveCatalogPayload(mockInventory, 'en');
+  assert.strictEqual(payloadEn.type, 'list');
+  assert.ok(payloadEn.header?.text, 'Header text must be present');
+  assert.ok(payloadEn.header.text.length <= 60, 'Header must be <= 60 chars');
+  assert.ok(payloadEn.body.text.length <= 1024, 'Body must be <= 1024 chars');
+  assert.ok(payloadEn.footer?.text && payloadEn.footer.text.length <= 60, 'Footer must be <= 60 chars');
+  assert.ok(payloadEn.action.button.length <= 20, 'Action button must be <= 20 chars');
+
+  const rows = payloadEn.action.sections[0].rows;
+  assert.ok(rows.length <= 10, 'Total rows must not exceed Meta 10-row limit');
+  assert.ok(rows.length === 5, 'Must group 5 distinct school years (Year 1, 3, 4, 5, 12)');
+
+  for (const row of rows) {
+    assert.ok(row.id.startsWith('browse_year_'), 'Row ID must follow browse_year convention');
+    assert.ok(row.title.length <= 24, `Row title "${row.title}" must be <= 24 chars`);
+    if (row.description) {
+      assert.ok(row.description.length <= 72, `Row description "${row.description}" must be <= 72 chars`);
+    }
+  }
+
+  // Verify French localization
+  const payloadFr = buildInteractiveCatalogPayload(mockInventory, 'fr');
+  assert.ok(payloadFr.action.button.length <= 20, 'French action button must be <= 20 chars');
+  assert.ok(payloadFr.action.sections[0].rows[0].title.includes('Année'), 'French title must use Année');
+});
+
+test('whatsapp interactive list: handles overflow when more than 10 school grades exist', () => {
+  // Simulate 12 school years (Years 1 to 12)
+  const largeInventory = [];
+  for (let year = 1; year <= 12; year++) {
+    largeInventory.push({
+      title: `Books for Year ${year} Mathematics`,
+      conditionType: 'Good',
+      concept: `Year${year}Mathematics`,
+    });
+  }
+
+  const payload = buildInteractiveCatalogPayload(largeInventory, 'en');
+  const rows = payload.action.sections[0].rows;
+  assert.strictEqual(rows.length, 10, 'Must cap total rows to exactly 10 for Meta compliance');
+
+  const lastRow = rows[9];
+  assert.strictEqual(lastRow.id, 'browse_year_other');
+  assert.strictEqual(lastRow.title, 'Other Grades');
+  assert.ok(lastRow.description?.includes('other grades'), 'Overflow row description must mention remaining grades');
+});
+
+test('whatsapp interactive list: enforces Meta constraints on year drill-down subjects list', () => {
+  const mockInventory = [
+    { title: 'Books for Year 5 Chemistry', conditionType: 'LikeNew', concept: 'Year5Chemistry' },
+    { title: 'Books for Year 5 Chemistry', conditionType: 'LikeNew', concept: 'Year5Chemistry' },
+    { title: 'Books for Year 5 Mathematics', conditionType: 'New', concept: 'Year5Mathematics' },
+    { title: 'Books for Year 5 Science', conditionType: 'Good', concept: 'Year5Science' },
+    { title: 'Books for Year 5 English', conditionType: 'Good', concept: 'Year5English' },
+    { title: 'Books for Year 3 Mathematics', conditionType: 'New', concept: 'Year3Mathematics' },
+  ];
+
+  const yearPayload = buildInteractiveYearSubjectsPayload('Year 5', mockInventory, 'en');
+  assert.strictEqual(yearPayload.type, 'list');
+  assert.ok(yearPayload.header?.text.includes('Year 5'), 'Header must reference Year 5');
+  assert.ok(yearPayload.header?.text && yearPayload.header.text.length <= 60, 'Header must be <= 60 chars');
+  assert.ok(yearPayload.action.button.length <= 20, 'Action button must be <= 20 chars');
+
+  const rows = yearPayload.action.sections[0].rows;
+  assert.strictEqual(rows.length, 4, 'Must contain 4 distinct subjects for Year 5');
+
+  for (const row of rows) {
+    assert.ok(row.id.startsWith('request_concept_'), 'Subject row ID must start with request_concept_');
+    assert.ok(row.title.length <= 24, `Subject title "${row.title}" must be <= 24 chars`);
+    if (row.description) {
+      assert.ok(row.description.length <= 72, `Subject description "${row.description}" must be <= 72 chars`);
+    }
+  }
+
+  // Check chemistry count & badge
+  const chemRow = rows.find(r => r.title === 'Chemistry');
+  assert.ok(chemRow, 'Chemistry subject row must exist');
+  assert.ok(chemRow.description?.includes('2 avail'), 'Chemistry count must reflect 2 available');
+  assert.ok(chemRow.description?.includes('Like New'), 'Chemistry condition badge must be included');
+});
+
+test('whatsapp interactive helpers: string truncation and domain inference handle edge cases', () => {
+  const shortText = 'Mathematics';
+  assert.strictEqual(truncateWhatsAppText(shortText, 24), 'Mathematics');
+
+  const longText = 'Advanced Cambridge International AS & A Level Mathematics Pure 1';
+  const truncated = truncateWhatsAppText(longText, 24);
+  assert.ok(truncated.length <= 24, 'Truncated text must not exceed limit');
+  assert.ok(truncated.endsWith('…'), 'Truncated text must end with ellipsis');
+
+  assert.strictEqual(cleanSubjectName('Books for Year 5 Chemistry', 'en'), 'Chemistry');
+  assert.strictEqual(cleanSubjectName('Livres pour chimie', 'fr'), 'Chimie');
+  assert.strictEqual(cleanSubjectName('', 'en'), 'General Textbooks');
+
+  assert.strictEqual(inferDomainFromConcept('Year5Chemistry'), 'Science');
+  assert.strictEqual(inferDomainFromConcept('Year12Mathematics'), 'Mathematics');
+  assert.strictEqual(inferDomainFromConcept('Year7English'), 'Languages');
+  assert.strictEqual(inferDomainFromConcept('Year9History'), 'Humanities');
+});
+

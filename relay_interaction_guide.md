@@ -128,21 +128,39 @@ As soon as another parent lists this book, we will automatically match you and n
 
 Parents can inspect available inventory and open requests anytime using simple keywords.
 
-### A. View Active Books Catalog
+### A. View Active Books Catalog (Interactive List Messages)
 > **Triggers:** `catalog`, `catalogue`, `available books`, `livres disponibles`
 
-```text
-📚 Available Books in Catalog:
+Relay sends a native **WhatsApp Interactive List Message** with a button (`📚 Select Grade` / `📚 Choisir classe`). Tapping the button opens a clean bottom drawer:
 
-• Year 3:
-  - Chemistry Book for Year 3 (Contact: +237 6XXXXXXXX)
+1. **Step 1: Select Grade / Year Menu:**
+   ```text
+   📚 Book Catalog (70 books)
+   We have 70 books available in our school community! Tap below to choose a grade and browse subjects:
+   
+   [ 📚 Select Grade ]
+   ├── Year 1 (6 books • General Textbooks)
+   ├── Year 3 (7 books • Math, Science, English...)
+   ├── Year 4 (9 books • Math, Science, Computing...)
+   ├── Year 5 (22 books • Chemistry, English, Math...)
+   └── Year 12 (10 books • Math, Chem, Physics...)
+   ```
 
-• Year 7:
-  - Humanities Book for Year 7 (Contact: +237 6XXXXXXXX)
+2. **Step 2: 1-Tap Subject Selection & Direct Request:**
+   Tapping a grade (e.g. `Year 5`) immediately returns the **Year 5 Interactive Subject List**:
+   ```text
+   📚 Year 5 Books (22)
+   Here are available books for Year 5. Tap below to choose and request in 1 tap:
+   
+   [ 📖 Select Book ]
+   ├── Chemistry (8 avail — Like New)
+   ├── Mathematics (1 avail — New)
+   ├── Science (2 avail — New, Good)
+   └── English (1 avail — Good)
+   ```
+   Tapping a subject directly registers the request and connects with the matching parent—**zero typing required!**
 
-• Year 9:
-  - Maths Book for Year 9 (Contact: +237 6XXXXXXXX)
-```
+*(Note: If a messaging client does not support interactive lists, Relay gracefully falls back to the formatted summary text).*
 
 ---
 

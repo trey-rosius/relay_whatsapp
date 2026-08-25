@@ -223,6 +223,121 @@ export async function sendWhatsAppTextMessage(toPhone: string, textBody: string)
   });
 }
 
+// ─── WhatsApp Interactive Messages (List & Button Messages) ─────────────────
+
+export interface WhatsAppInteractiveRow {
+  id: string;
+  title: string;
+  description?: string;
+}
+
+export interface WhatsAppInteractiveSection {
+  title?: string;
+  rows: WhatsAppInteractiveRow[];
+}
+
+export interface WhatsAppInteractiveListPayload {
+  type: 'list';
+  header?: {
+    type: 'text';
+    text: string;
+  };
+  body: {
+    text: string;
+  };
+  footer?: {
+    text: string;
+  };
+  action: {
+    button: string;
+    sections: WhatsAppInteractiveSection[];
+  };
+}
+
+export interface WhatsAppInteractiveButton {
+  type: 'reply';
+  reply: {
+    id: string;
+    title: string;
+  };
+}
+
+export interface WhatsAppInteractiveButtonPayload {
+  type: 'button';
+  header?: {
+    type: 'text';
+    text: string;
+  };
+  body: {
+    text: string;
+  };
+  footer?: {
+    text: string;
+  };
+  action: {
+    buttons: WhatsAppInteractiveButton[];
+  };
+}
+
+export type WhatsAppInteractivePayload = WhatsAppInteractiveListPayload | WhatsAppInteractiveButtonPayload;
+
+/**
+ * Sends an outbound WhatsApp interactive message (list or buttons) to a user via Meta Graph API.
+ */
+export async function sendWhatsAppInteractiveMessage(toPhone: string, interactive: WhatsAppInteractivePayload) {
+  return await tracer.startSegment('whatsapp_outbound_interactive_dispatch', async (segment) => {
+    try {
+      const creds = await getWhatsAppCredentials();
+      if (!creds.token || !creds.phoneNumberId) return;
+
+      segment.addAnnotation('recipientPhoneMasked', toPhone.slice(-4));
+      segment.addAnnotation('interactiveType', interactive.type);
+      const startTime = Date.now();
+
+      const formattedTo = toPhone.replace(/[^0-9]/g, '');
+      console.log(`[WhatsAppOutboundInteractive] Dispatching ${interactive.type} to: ${formattedTo} via phoneId: ${creds.phoneNumberId}`);
+
+      const res = await fetch(`https://graph.facebook.com/v25.0/${creds.phoneNumberId}/messages`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${creds.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: formattedTo,
+          type: 'interactive',
+          interactive,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        console.error('[WhatsAppOutboundInteractiveError]', res.status, JSON.stringify(data));
+      } else {
+        console.log('[WhatsAppOutboundInteractiveSuccess]', JSON.stringify(data));
+      }
+
+      const latency = Date.now() - startTime;
+      metrics.emit('WhatsAppDispatchLatency', latency, { unit: 'Milliseconds' });
+      metrics.emit('WhatsAppInteractiveSent', 1, { unit: 'Count', dimensions: { type: interactive.type } });
+
+      if (res.status === 429) {
+        metrics.emit('ThrottlingErrors', 1, { unit: 'Count', dimensions: { target: 'meta_graph_api' } });
+      }
+
+      segment.setHttpStatus(res.status);
+      return data;
+    } catch (err) {
+      segment.addError(err as Error);
+      console.error('Failed to dispatch Meta WhatsApp interactive outbound message:', err);
+      metrics.emit('WhatsAppDispatchErrors', 1, { unit: 'Count' });
+      return null;
+    }
+  });
+}
+
 // ─── 1. Data Models (DynamoDB via DistributedTable) ──────────────────────────
 
 export const DOMAIN_TYPES = [
@@ -461,9 +576,99 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         });
       });
 
+      // Step 0: Check for Interactive List / Button Selection Fast-Path
+      if (payload.interactive?.id) {
+        const interactiveId = payload.interactive.id;
+        const interactiveTitle = payload.interactive.title || '';
+
+        // 1. Browsing a specific year/grade
+        if (interactiveId.startsWith('browse_year_')) {
+          const yearTarget = interactiveId.replace('browse_year_', '');
+          const allInventory = await Array.fromAsync(activeInventory.scan());
+          const now = Date.now();
+          const activeBooks = allInventory.filter(
+            (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
+          );
+
+          const isFr = /ann[ée]e|autre|fran[çc]ais/i.test(interactiveTitle) || /ann[ée]e/i.test(yearTarget);
+          const lang = isFr ? 'fr' : 'en';
+
+          const yearPayload = buildInteractiveYearSubjectsPayload(yearTarget, activeBooks, lang);
+          await sendWhatsAppInteractiveMessage(payload.from_phone, yearPayload);
+
+          const replyText = lang === 'fr' ? `Catalogue envoyé pour ${yearTarget}` : `Catalog sent for ${yearTarget}`;
+          const duration = Date.now() - startTime;
+          metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'year_catalog_sent' } });
+
+          return {
+            status: 'processed',
+            replyMessage: replyText,
+            extractedIntentsCount: 1,
+            vectorChunksCount: 0,
+          };
+        }
+
+        // 2. Main catalog request from button/interactive
+        if (interactiveId === 'show_catalog' || interactiveId === 'browse_catalog') {
+          const allInventory = await Array.fromAsync(activeInventory.scan());
+          const now = Date.now();
+          const activeBooks = allInventory.filter(
+            (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
+          );
+
+          const isFr = /catalogue|livres/i.test(interactiveTitle);
+          const lang = isFr ? 'fr' : 'en';
+
+          if (activeBooks.length === 0) {
+            const emptyMsg = await generateLLMMessage('catalog_empty', { lang });
+            await sendWhatsAppTextMessage(payload.from_phone, emptyMsg);
+          } else {
+            const catalogInteractive = buildInteractiveCatalogPayload(activeBooks, lang);
+            const res = await sendWhatsAppInteractiveMessage(payload.from_phone, catalogInteractive);
+            if (!res) {
+              await sendWhatsAppTextMessage(payload.from_phone, buildGroupedCatalogText(activeBooks, lang));
+            }
+          }
+
+          const duration = Date.now() - startTime;
+          metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'main_catalog_sent' } });
+
+          return {
+            status: 'processed',
+            replyMessage: 'Interactive catalog sent',
+            extractedIntentsCount: 1,
+            vectorChunksCount: 0,
+          };
+        }
+      }
+
       // Step 2: Vision & Text Extraction via Amazon Bedrock
       const extractedIntents = await context.step(`bedrock-vision-extraction-${reqId}`, async () => {
         return await tracer.startSegment('step_bedrock_extraction', async () => {
+          if (
+            payload.interactive?.id &&
+            (payload.interactive.id.startsWith('request_concept_') || payload.interactive.id.startsWith('request_book_'))
+          ) {
+            const rawConcept = payload.interactive.id.replace(/^(?:request_concept_|request_book_)/, '');
+            const normConcept = normalizeConceptKey(rawConcept);
+            const title = payload.interactive.title || rawConcept;
+            const isFr = /chimie|math[ée]matiques|anglais|physique|livres|ann[ée]e/i.test(title);
+            const lang = isFr ? 'fr' : 'en';
+
+            return [
+              {
+                intent: 'demand' as const,
+                lang,
+                concept: normConcept,
+                title,
+                domain: inferDomainFromConcept(normConcept),
+                providerCategory: 'HighSchool' as const,
+                conditionType: 'Good' as const,
+                description: `Requested via WhatsApp Interactive List: ${title}`,
+              },
+            ];
+          }
+
           const textToAnalyze = payload.message_text || 'Year 5 Chemistry Book in excellent condition';
           return await parseParentMessageIntentsWithLLM(textToAnalyze);
         });
@@ -496,7 +701,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
       // Conversational Year Validation: If parent offers or seeks a book with NO school year specified
       const firstOfferOrDemand = extractedIntents.find(i => i.intent === 'offer' || i.intent === 'demand');
       if (firstOfferOrDemand && !hasExplicitSchoolYear(firstOfferOrDemand.concept, payload.message_text || '')) {
-        const lang = firstOfferOrDemand.lang || 'en';
+        const lang: 'en' | 'fr' = firstOfferOrDemand.lang === 'fr' ? 'fr' : 'en';
         const clarificationMsg = await generateLLMMessage('year_clarification', {
           title: firstOfferOrDemand.title,
           subject: firstOfferOrDemand.domain,
@@ -633,9 +838,16 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
               if (activeBooks.length === 0) {
                 const emptyMsg = await generateLLMMessage('catalog_empty', { lang: item.lang });
                 await sendWhatsAppTextMessage(payload.from_phone, emptyMsg);
+                lastReplyMessage = emptyMsg;
               } else {
+                const catalogPayload = buildInteractiveCatalogPayload(activeBooks, item.lang);
                 const catalogMessage = buildGroupedCatalogText(activeBooks, item.lang);
-                await sendWhatsAppTextMessage(payload.from_phone, catalogMessage);
+
+                const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, catalogPayload);
+                if (!dispatchRes) {
+                  await sendWhatsAppTextMessage(payload.from_phone, catalogMessage);
+                }
+                lastReplyMessage = catalogMessage;
               }
               return true;
             });
@@ -677,6 +889,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
               const demandId = `demand_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
               const handoverCode = Math.floor(1000 + Math.random() * 9000).toString();
+              const demandLang: 'en' | 'fr' = item.lang === 'fr' ? 'fr' : 'en';
               const demandEntry: DemandItem = {
                 demandId,
                 userPhone: payload.from_phone,
@@ -684,7 +897,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                 concept: item.concept,
                 domain: item.domain,
                 status: activeMatch ? 'matched' : 'pending',
-                preferredLang: item.lang,
+                preferredLang: demandLang,
                 matchedItemId: activeMatch?.itemId,
                 matchedAt: activeMatch ? Date.now() : undefined,
                 handoverCode: activeMatch ? handoverCode : undefined,
@@ -718,8 +931,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                 metrics.emit('DemandMatchedCount', 1, { unit: 'Count' });
 
                 // Asymmetric language routing: Buyer in buyer's lang, Seller in seller's lang
-                const buyerLang = item.lang || 'en';
-                const sellerLang = activeMatch.preferredLang || 'en';
+                const buyerLang: 'en' | 'fr' = item.lang === 'fr' ? 'fr' : 'en';
+                const sellerLang: 'en' | 'fr' = activeMatch.preferredLang === 'fr' ? 'fr' : 'en';
 
                 const buyerMsg = await generateLLMMessage('match_buyer', {
                   title: item.title,
@@ -734,7 +947,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                 await sendWhatsAppTextMessage(payload.from_phone, buyerMsg);
                 await sendWhatsAppTextMessage(activeMatch.sellerPhone, sellerMsg);
               } else {
-                const postedMsg = await generateLLMMessage('demand_posted', { title: item.title, lang: item.lang });
+                const postedMsg = await generateLLMMessage('demand_posted', { title: item.title, lang: demandLang });
                 await sendWhatsAppTextMessage(payload.from_phone, postedMsg);
               }
 
@@ -923,6 +1136,12 @@ export interface WhatsAppInboundPayload {
   from_phone: string;
   message_text?: string;
   rawSignature?: string;
+  interactive?: {
+    type: 'list_reply' | 'button_reply';
+    id: string;
+    title: string;
+    description?: string;
+  };
 }
 
 export interface ExtractedIntentItem {
@@ -1313,9 +1532,26 @@ export function normalizeConceptKey(rawConcept: string, fallbackText: string = '
   return `${prefix}Books`;
 }
 
-function cleanSubjectName(rawSubject: string, lang: 'en' | 'fr'): string {
+export function truncateWhatsAppText(text: string, maxLen: number): string {
+  if (!text) return '';
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen - 1).trim() + '…';
+}
+
+export function inferDomainFromConcept(concept: string): (typeof DOMAIN_TYPES)[number] {
+  const lower = concept.toLowerCase();
+  if (lower.includes('math')) return 'Mathematics';
+  if (lower.includes('english') || lower.includes('french') || lower.includes('lang') || lower.includes('anglais')) return 'Languages';
+  if (lower.includes('art') || lower.includes('music') || lower.includes('theatre')) return 'Arts';
+  if (lower.includes('history') || lower.includes('geography') || lower.includes('social') || lower.includes('human')) return 'Humanities';
+  return 'Science';
+}
+
+export function cleanSubjectName(rawSubject: string, lang: 'en' | 'fr'): string {
   let clean = rawSubject.trim();
-  clean = clean.replace(/^(?:Books|Livres|for|pour|de|d')?\s*/i, '').trim();
+  clean = clean.replace(/^(?:Books for Year|Livres pour l'année|Year|Année)\s*\d{1,2}\s*/i, '').trim();
+  clean = clean.replace(/^(?:Books|Livres)\s*(?:for|pour|de|d')?\s*/i, '').trim();
+  clean = clean.replace(/^(?:for|pour|de|d')\s+/i, '').trim();
   if (!clean) {
     return lang === 'fr' ? 'Livres généraux' : 'General Textbooks';
   }
@@ -1364,6 +1600,288 @@ export function formatConditionBadges(conditions: string[], lang: 'en' | 'fr'): 
   }
 
   return badges.length > 0 ? ` — ${badges.join(', ')}` : '';
+}
+
+export function buildInteractiveCatalogPayload(
+  activeBooks: Array<{ title: string; concept?: string; conditionType?: string; domain?: string; [key: string]: any }>,
+  lang: 'en' | 'fr' = 'en'
+): WhatsAppInteractiveListPayload {
+  const yearGroups: Record<
+    string,
+    { yearNum: number; count: number; subjects: string[] }
+  > = {};
+
+  for (const book of activeBooks) {
+    const rawTitle = book.title || '';
+    const match = rawTitle.match(/(?:Books for Year|Livres pour l'année|Year|Année)\s*(\d{1,2})(.*)/i);
+
+    let yearLabel: string;
+    let yearNum: number;
+    let rawSubject: string;
+
+    if (match) {
+      yearNum = parseInt(match[1], 10);
+      rawSubject = match[2];
+      yearLabel = lang === 'fr' ? `Année ${yearNum}` : `Year ${yearNum}`;
+    } else {
+      yearNum = 999;
+      yearLabel = lang === 'fr' ? 'Général' : 'General';
+      rawSubject = rawTitle;
+    }
+
+    const displaySubject = cleanSubjectName(rawSubject, lang);
+    if (!yearGroups[yearLabel]) {
+      yearGroups[yearLabel] = { yearNum, count: 0, subjects: [] };
+    }
+    yearGroups[yearLabel].count += 1;
+    if (!yearGroups[yearLabel].subjects.includes(displaySubject)) {
+      yearGroups[yearLabel].subjects.push(displaySubject);
+    }
+  }
+
+  const sortedYears = Object.keys(yearGroups).sort((a, b) => {
+    return yearGroups[a].yearNum - yearGroups[b].yearNum;
+  });
+
+  const totalCount = activeBooks.length;
+  const rows: WhatsAppInteractiveRow[] = [];
+
+  // WhatsApp Interactive List limit: MAX 10 rows across all sections
+  if (sortedYears.length <= 10) {
+    for (const year of sortedYears) {
+      const g = yearGroups[year];
+      const subjectsPreview = g.subjects.slice(0, 3).join(', ');
+      const moreCount = g.subjects.length > 3 ? '…' : '';
+      const booksLabel = lang === 'fr' ? (g.count > 1 ? 'livres' : 'livre') : (g.count > 1 ? 'books' : 'book');
+      const desc = `${g.count} ${booksLabel} • ${subjectsPreview}${moreCount}`;
+
+      rows.push({
+        id: `browse_year_${year}`,
+        title: truncateWhatsAppText(year, 24),
+        description: truncateWhatsAppText(desc, 72),
+      });
+    }
+  } else {
+    // If more than 10 years, include top 9 and a grouped 10th row for overflow
+    for (let i = 0; i < 9; i++) {
+      const year = sortedYears[i];
+      const g = yearGroups[year];
+      const subjectsPreview = g.subjects.slice(0, 3).join(', ');
+      const moreCount = g.subjects.length > 3 ? '…' : '';
+      const booksLabel = lang === 'fr' ? (g.count > 1 ? 'livres' : 'livre') : (g.count > 1 ? 'books' : 'book');
+      const desc = `${g.count} ${booksLabel} • ${subjectsPreview}${moreCount}`;
+
+      rows.push({
+        id: `browse_year_${year}`,
+        title: truncateWhatsAppText(year, 24),
+        description: truncateWhatsAppText(desc, 72),
+      });
+    }
+
+    const remainingYears = sortedYears.slice(9);
+    const remainingCount = remainingYears.reduce((sum, y) => sum + yearGroups[y].count, 0);
+    const overflowTitle = lang === 'fr' ? 'Autres Classes' : 'Other Grades';
+    const overflowDesc =
+      lang === 'fr'
+        ? `${remainingCount} livres (${remainingYears.length} autres classes)`
+        : `${remainingCount} books (${remainingYears.length} other grades)`;
+
+    rows.push({
+      id: `browse_year_other`,
+      title: truncateWhatsAppText(overflowTitle, 24),
+      description: truncateWhatsAppText(overflowDesc, 72),
+    });
+  }
+
+  // Fallback if no rows
+  if (rows.length === 0) {
+    rows.push({
+      id: `browse_catalog`,
+      title: truncateWhatsAppText(lang === 'fr' ? 'Catalogue vide' : 'Empty Catalog', 24),
+      description: truncateWhatsAppText(lang === 'fr' ? 'Aucun livre disponible' : 'No books available', 72),
+    });
+  }
+
+  const headerText =
+    lang === 'fr'
+      ? truncateWhatsAppText(`📚 Catalogue (${totalCount} livres)`, 60)
+      : truncateWhatsAppText(`📚 Book Catalog (${totalCount} books)`, 60);
+
+  const bodyText =
+    lang === 'fr'
+      ? `Nous avons ${totalCount} livre(s) disponible(s) dans la communauté scolaire ! Choisissez une classe ci-dessous pour voir les matières disponibles :`
+      : `We have ${totalCount} book(s) available in our school community! Tap below to choose a grade and browse subjects:`;
+
+  const footerText =
+    lang === 'fr'
+      ? truncateWhatsAppText('Relay • Échange Scolaire Simplifié', 60)
+      : truncateWhatsAppText('Relay • 1-Tap Community Exchange', 60);
+
+  const buttonText =
+    lang === 'fr'
+      ? truncateWhatsAppText('📚 Choisir classe', 20)
+      : truncateWhatsAppText('📚 Select Grade', 20);
+
+  const sectionTitle =
+    lang === 'fr'
+      ? truncateWhatsAppText('Classes Disponibles', 24)
+      : truncateWhatsAppText('Available Grades', 24);
+
+  return {
+    type: 'list',
+    header: {
+      type: 'text',
+      text: headerText,
+    },
+    body: {
+      text: truncateWhatsAppText(bodyText, 1024),
+    },
+    footer: {
+      text: footerText,
+    },
+    action: {
+      button: buttonText,
+      sections: [
+        {
+          title: sectionTitle,
+          rows,
+        },
+      ],
+    },
+  };
+}
+
+export function buildInteractiveYearSubjectsPayload(
+  yearLabel: string,
+  activeBooks: Array<{ title: string; concept?: string; conditionType?: string; domain?: string; [key: string]: any }>,
+  lang: 'en' | 'fr' = 'en'
+): WhatsAppInteractiveListPayload {
+  const yearNumMatch = yearLabel.match(/\d{1,2}/);
+  const targetYearNum = yearNumMatch ? parseInt(yearNumMatch[0], 10) : null;
+  const isOther = /other|autre|g[ée]n[ée]ral/i.test(yearLabel);
+
+  const matchingBooks = activeBooks.filter((book) => {
+    const rawTitle = book.title || '';
+    const match = rawTitle.match(/(?:Books for Year|Livres pour l'année|Year|Année)\s*(\d{1,2})/i);
+    if (targetYearNum !== null) {
+      if (match) {
+        return parseInt(match[1], 10) === targetYearNum;
+      }
+      return false;
+    }
+    if (isOther) {
+      return !match;
+    }
+    return rawTitle.toLowerCase().includes(yearLabel.toLowerCase());
+  });
+
+  const subjectsMap: Record<
+    string,
+    { displaySubject: string; concept: string; count: number; conditions: string[] }
+  > = {};
+
+  for (const book of matchingBooks) {
+    const rawTitle = book.title || '';
+    const match = rawTitle.match(/(?:Books for Year|Livres pour l'année|Year|Année)\s*(\d{1,2})(.*)/i);
+    const rawSubject = match ? match[2] : rawTitle;
+    const displaySubject = cleanSubjectName(rawSubject, lang);
+    const key = displaySubject.toLowerCase();
+
+    if (!subjectsMap[key]) {
+      const fallbackConcept = targetYearNum !== null
+        ? normalizeConceptKey(`Year${targetYearNum}${displaySubject.replace(/\s+/g, '')}`)
+        : (book.concept || normalizeConceptKey(rawTitle));
+
+      subjectsMap[key] = {
+        displaySubject,
+        concept: book.concept || fallbackConcept,
+        count: 0,
+        conditions: [],
+      };
+    }
+    subjectsMap[key].count += 1;
+    if (book.conditionType) {
+      subjectsMap[key].conditions.push(book.conditionType);
+    }
+  }
+
+  const subjectEntries = Object.values(subjectsMap);
+  const rows: WhatsAppInteractiveRow[] = [];
+
+  const maxRows = Math.min(subjectEntries.length, 10);
+  for (let i = 0; i < maxRows; i++) {
+    const item = subjectEntries[i];
+    const availableText = lang === 'fr' ? `${item.count} dispo` : `${item.count} avail`;
+    const badges = formatConditionBadges(item.conditions, lang);
+    const desc = `${availableText}${badges}`;
+
+    rows.push({
+      id: `request_concept_${item.concept}`,
+      title: truncateWhatsAppText(item.displaySubject, 24),
+      description: truncateWhatsAppText(desc, 72),
+    });
+  }
+
+  // Fallback if no specific subjects matched
+  if (rows.length === 0) {
+    rows.push({
+      id: `browse_catalog`,
+      title: truncateWhatsAppText(lang === 'fr' ? 'Voir tout catalogue' : 'View All Catalog', 24),
+      description: truncateWhatsAppText(lang === 'fr' ? 'Retour au catalogue' : 'Back to main catalog', 72),
+    });
+  }
+
+  const displayYear = targetYearNum !== null
+    ? (lang === 'fr' ? `Année ${targetYearNum}` : `Year ${targetYearNum}`)
+    : yearLabel;
+
+  const headerText =
+    lang === 'fr'
+      ? truncateWhatsAppText(`📚 Livres ${displayYear} (${matchingBooks.length})`, 60)
+      : truncateWhatsAppText(`📚 ${displayYear} Books (${matchingBooks.length})`, 60);
+
+  const bodyText =
+    lang === 'fr'
+      ? `Voici les livres disponibles pour ${displayYear}. Appuyez ci-dessous pour choisir et réserver en 1 clic :`
+      : `Here are available books for ${displayYear}. Tap below to choose and request in 1 tap:`;
+
+  const footerText =
+    lang === 'fr'
+      ? truncateWhatsAppText('Relay • Demande Instantanée', 60)
+      : truncateWhatsAppText('Relay • 1-Tap Request', 60);
+
+  const buttonText =
+    lang === 'fr'
+      ? truncateWhatsAppText('📖 Choisir un livre', 20)
+      : truncateWhatsAppText('📖 Select Book', 20);
+
+  const sectionTitle =
+    lang === 'fr'
+      ? truncateWhatsAppText(`Matières ${displayYear}`, 24)
+      : truncateWhatsAppText(`${displayYear} Subjects`, 24);
+
+  return {
+    type: 'list',
+    header: {
+      type: 'text',
+      text: headerText,
+    },
+    body: {
+      text: truncateWhatsAppText(bodyText, 1024),
+    },
+    footer: {
+      text: footerText,
+    },
+    action: {
+      button: buttonText,
+      sections: [
+        {
+          title: sectionTitle,
+          rows,
+        },
+      ],
+    },
+  };
 }
 
 export function buildGroupedCatalogText(
@@ -1934,11 +2452,36 @@ export const webhookPost = new RawRoute(scope, 'webhook-post', {
       return;
     }
 
-    const fromPhone = entry?.messages?.[0]?.from || payload?.from_phone;
-    const messageText = entry?.messages?.[0]?.text?.body || payload?.message_text;
-    const mediaId = entry?.messages?.[0]?.image?.id || payload?.media_id;
+    const incomingMsg = entry?.messages?.[0];
+    const fromPhone = incomingMsg?.from || payload?.from_phone;
+    let messageText = incomingMsg?.text?.body || payload?.message_text;
+    const mediaId = incomingMsg?.image?.id || payload?.media_id;
 
-    if (!fromPhone || (!messageText && !mediaId)) {
+    let interactive = payload?.interactive;
+    if (incomingMsg?.type === 'interactive' && incomingMsg.interactive) {
+      if (incomingMsg.interactive.type === 'list_reply' && incomingMsg.interactive.list_reply) {
+        interactive = {
+          type: 'list_reply',
+          id: incomingMsg.interactive.list_reply.id,
+          title: incomingMsg.interactive.list_reply.title,
+          description: incomingMsg.interactive.list_reply.description,
+        };
+        if (!messageText) {
+          messageText = incomingMsg.interactive.list_reply.title;
+        }
+      } else if (incomingMsg.interactive.type === 'button_reply' && incomingMsg.interactive.button_reply) {
+        interactive = {
+          type: 'button_reply',
+          id: incomingMsg.interactive.button_reply.id,
+          title: incomingMsg.interactive.button_reply.title,
+        };
+        if (!messageText) {
+          messageText = incomingMsg.interactive.button_reply.title;
+        }
+      }
+    }
+
+    if (!fromPhone || (!messageText && !mediaId && !interactive)) {
       context.response.status = 200;
       context.response.send({ status: 'ignored', message: 'No actionable message content' });
       return;
@@ -1948,6 +2491,7 @@ export const webhookPost = new RawRoute(scope, 'webhook-post', {
       from_phone: fromPhone,
       message_text: messageText,
       media_id: mediaId,
+      interactive,
     });
 
     context.response.status = 200;

@@ -426,6 +426,66 @@ test('strands agent: chatWithAgent provides multi-turn conversational AI for par
   assert.ok(typeof chatRes.replyText === 'string');
 });
 
+// ─── 19. WhatsApp Interactive List Messages ──────────────────────────────────
+
+test('whatsapp interactive list: handles browse_year list_reply and returns interactive subject list', async () => {
+  const buyerPhone = '+15554433221';
+  
+  // First ensure there is at least one book in Year 5
+  await api.handleWebhook({
+    from_phone: '+15559990001',
+    message_text: 'I am selling Year 5 Chemistry book in Like New condition',
+  });
+
+  const res = await api.handleWebhook({
+    from_phone: buyerPhone,
+    interactive: {
+      type: 'list_reply',
+      id: 'browse_year_Year 5',
+      title: 'Year 5',
+      description: 'Books for Year 5',
+    },
+  });
+
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.result.status, 'processed');
+  assert.ok(res.result.replyMessage?.includes('Year 5') || res.result.replyMessage?.includes('Année 5'));
+});
+
+test('whatsapp interactive list: 1-tap book request via list_reply auto-matches with active inventory', async () => {
+  const sellerPhone = '+15558887771';
+  const buyerPhone = '+15558887772';
+
+  // Seller lists Year 5 Mathematics
+  await api.handleWebhook({
+    from_phone: sellerPhone,
+    message_text: 'Year 5 Mathematics textbook in new condition',
+  });
+
+  // Buyer taps "Mathematics" from the interactive list
+  const res = await api.handleWebhook({
+    from_phone: buyerPhone,
+    interactive: {
+      type: 'list_reply',
+      id: 'request_concept_Year5Mathematics',
+      title: 'Mathematics',
+      description: '1 avail — New',
+    },
+  });
+
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.result.status, 'matched');
+  assert.ok(res.result.matchedDemandId, 'Must generate and match a demand');
+
+  // Verify demand status
+  const demands = await api.listDemands();
+  const demand = demands.find(d => d.demandId === res.result.matchedDemandId);
+  assert.ok(demand);
+  assert.strictEqual(demand.status, 'matched');
+  assert.strictEqual(demand.concept, 'Year5Mathematics');
+});
+
+
 
 
 
