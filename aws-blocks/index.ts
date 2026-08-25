@@ -1763,10 +1763,20 @@ export function buildInteractiveCatalogPayload(
       ? truncateWhatsAppText(`📚 Catalogue (${totalCount} livres)`, 60)
       : truncateWhatsAppText(`📚 Book Catalog (${totalCount} books)`, 60);
 
+  const gradeBullets = sortedYears
+    .slice(0, 8)
+    .map((y) => {
+      const g = yearGroups[y];
+      const booksLabel = lang === 'fr' ? (g.count > 1 ? 'livres' : 'livre') : (g.count > 1 ? 'books' : 'book');
+      return `• *${y}* (${g.count} ${booksLabel})`;
+    })
+    .join('\n');
+  const overflowMsg = sortedYears.length > 8 ? `\n• +${sortedYears.length - 8} ${lang === 'fr' ? 'autres classes' : 'more grades'}...` : '';
+
   const bodyText =
     lang === 'fr'
-      ? `Nous avons ${totalCount} livre(s) disponible(s) dans la communauté scolaire ! Choisissez une classe ci-dessous pour voir les matières disponibles :`
-      : `We have ${totalCount} book(s) available in our school community! Tap below to choose a grade and browse subjects:`;
+      ? `${totalCount} livres disponibles dans notre communauté :\n${gradeBullets}${overflowMsg}\n\n👇 Appuyez sur *Choisir classe* ci-dessous pour explorer :`
+      : `${totalCount} books available in our community:\n${gradeBullets}${overflowMsg}\n\n👇 Tap *Select Grade* below to browse:`;
 
   const footerText =
     lang === 'fr'
@@ -1902,10 +1912,21 @@ export function buildInteractiveYearSubjectsPayload(
       ? truncateWhatsAppText(`📚 Livres ${displayYear} (${matchingBooks.length})`, 60)
       : truncateWhatsAppText(`📚 ${displayYear} Books (${matchingBooks.length})`, 60);
 
-  const bodyText =
+  const summaryBullets = subjectEntries
+    .slice(0, 8)
+    .map((item) => {
+      const avail = lang === 'fr' ? `${item.count} dispo` : `${item.count} avail`;
+      const badges = formatConditionBadges(item.conditions, lang);
+      return `• *${item.displaySubject}* (${avail}${badges})`;
+    })
+    .join('\n');
+
+  const instructionText =
     lang === 'fr'
-      ? `Voici les livres disponibles pour ${displayYear}. Appuyez ci-dessous pour choisir et réserver en 1 clic :`
-      : `Here are available books for ${displayYear}. Tap below to choose and request in 1 tap:`;
+      ? '👇 Appuyez sur *Choisir un livre* pour réserver :'
+      : '👇 Tap *Select Book* below to request in 1 tap:';
+
+  const bodyText = summaryBullets ? `${summaryBullets}\n\n${instructionText}` : instructionText;
 
   const footerText =
     lang === 'fr'
