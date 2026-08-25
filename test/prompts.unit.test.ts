@@ -736,6 +736,30 @@ test('whatsapp translation: auto-translates book subjects and demands based on u
   assert.strictEqual(formatDemandDisplay(demand2, 'en'), '• *Mathematics* (Year 5)');
 });
 
+test('whatsapp subject catalog: declarative normalization strips suffixes and handles edge cases', () => {
+  // Coursebooks & Learner's books
+  assert.strictEqual(cleanSubjectName("Global English Learner's book", 'en'), 'English');
+  assert.strictEqual(cleanSubjectName("Global English Learner's book", 'fr'), 'Anglais');
+  assert.strictEqual(cleanSubjectName('Cambridge IGCSE Further Mathematics Coursebook', 'en'), 'Further Mathematics');
+  assert.strictEqual(cleanSubjectName('Cambridge IGCSE Further Mathematics Coursebook', 'fr'), 'Mathématiques Complémentaires');
+  assert.strictEqual(cleanSubjectName('Physics Student Book', 'fr'), 'Physique');
+  assert.strictEqual(cleanSubjectName('Computer Science Workbook', 'fr'), 'Informatique');
+
+  // French synonyms (SVT, Informatique, etc.)
+  assert.strictEqual(cleanSubjectName('Manuel de SVT 3eme', 'en'), 'Biology');
+  assert.strictEqual(cleanSubjectName('Manuel de SVT 3eme', 'fr'), 'Biologie');
+
+  // Unknown custom subjects gracefully capitalize without crash
+  assert.strictEqual(cleanSubjectName('Drama', 'en'), 'Drama');
+  assert.strictEqual(cleanSubjectName('Art & Design', 'fr'), 'Art & Design');
+
+  // Empty / fallback handling
+  assert.strictEqual(cleanSubjectName('', 'en'), 'General Textbooks');
+  assert.strictEqual(cleanSubjectName('', 'fr'), 'Livres généraux');
+  assert.strictEqual(cleanSubjectName('Books for Year 4', 'fr'), 'Livres généraux');
+});
+
+
 
 
 

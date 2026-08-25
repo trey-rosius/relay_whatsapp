@@ -1675,28 +1675,26 @@ export function hasExplicitSchoolYear(concept: string, text: string): boolean {
   return /(?:Year|Année|Grade|Classe(?:\s+de)?)\s*\d{1,2}|\b(?:6[èe]me|5[èe]me|4[èe]me|3[èe]me|2nde|1[èe]re|Terminale|CP|CE1|CE2|CM1|CM2)\b/i.test(text);
 }
 
-export function normalizeConceptKey(rawConcept: string, fallbackText: string = ''): string {
-  const clean = (rawConcept || '').replace(/<[^>]+>/g, '').replace(/\s+/g, '');
-  const yearMatch = clean.match(/(?:Year|Année)\s*(\d{1,2})/i) || fallbackText.match(/(?:Year|Année|Grade)\s*(\d{1,2})/i);
-  
+export function normalizeConceptKey(rawConcept: unknown, fallbackText: string = ''): string {
+  const conceptStr =
+    typeof rawConcept === 'string'
+      ? rawConcept
+      : rawConcept && typeof (rawConcept as any).concept === 'string'
+      ? (rawConcept as any).concept
+      : '';
+  const clean = conceptStr.replace(/<[^>]+>/g, '').replace(/\s+/g, '');
+  const fallbackStr = typeof fallbackText === 'string' ? fallbackText : '';
+  const yearMatch = clean.match(/(?:Year|Année)\s*(\d{1,2})/i) || fallbackStr.match(/(?:Year|Année|Grade)\s*(\d{1,2})/i);
+
   const num = yearMatch ? yearMatch[1] : '';
   const prefix = num ? `Year${num}` : 'General';
 
-  // Check specific concept string first to avoid multi-intent text contamination
-  const conceptLower = clean.toLowerCase();
-  const textToCheck = conceptLower.length > (num ? `Year${num}`.length : 0) ? conceptLower : fallbackText.toLowerCase();
+  const textToCheck = clean.length > (num ? `Year${num}`.length : 0) ? clean : fallbackStr;
+  const canonicalSubject = cleanSubjectName(textToCheck, 'en').replace(/[^a-zA-Z0-9]/g, '');
 
-  if (textToCheck.includes('chemistry') || textToCheck.includes('chimie')) return `${prefix}Chemistry`;
-  if (textToCheck.includes('biology') || textToCheck.includes('biologie')) return `${prefix}Biology`;
-  if (textToCheck.includes('physics') || textToCheck.includes('physique')) return `${prefix}Physics`;
-  if (textToCheck.includes('humanities') || textToCheck.includes('humanite')) return `${prefix}Humanities`;
-  if (textToCheck.includes('history') || textToCheck.includes('histoire')) return `${prefix}History`;
-  if (textToCheck.includes('geography') || textToCheck.includes('geographie')) return `${prefix}Geography`;
-  if (textToCheck.includes('math')) return `${prefix}Mathematics`;
-  if (textToCheck.includes('english') || textToCheck.includes('anglais')) return `${prefix}English`;
-  if (textToCheck.includes('science')) return `${prefix}Science`;
-  if (textToCheck.includes('computer') || textToCheck.includes('coding')) return `${prefix}ComputerScience`;
-  if (textToCheck.includes('global')) return `${prefix}GlobalPerspectives`;
+  if (canonicalSubject && canonicalSubject !== 'GeneralTextbooks') {
+    return `${prefix}${canonicalSubject}`;
+  }
 
   return `${prefix}Books`;
 }
@@ -1716,33 +1714,132 @@ export function inferDomainFromConcept(concept: string): (typeof DOMAIN_TYPES)[n
   return 'Science';
 }
 
-export function cleanSubjectName(rawSubject: string, lang: 'en' | 'fr'): string {
-  let clean = rawSubject.trim();
-  clean = clean.replace(/^(?:Books for Year|Livres pour l'année|Livres de|Livres d'|Books for|Books of|Year|Année)\s*\d{1,2}\s*/i, '').trim();
-  clean = clean.replace(/^(?:Books|Livres)\s*(?:for|pour|de|d'|in)?\s*/i, '').trim();
-  clean = clean.replace(/^(?:for|pour|de|d')\s+/i, '').trim();
-  if (!clean || /^books?$|^livres?$/i.test(clean)) {
+/**
+ * Declarative curriculum subject definitions with localized labels and priority pattern matchers.
+ */
+export interface SubjectDefinition {
+  patterns: readonly RegExp[];
+  en: string;
+  fr: string;
+}
+
+export const SUBJECT_CATALOG: readonly SubjectDefinition[] = [
+  {
+    patterns: [/\bfurther\s+math(?:ematics|s)?\b/i, /\bmath(?:[ée]matiques|s)?\s+compl[ée]mentaires?\b/i],
+    en: 'Further Mathematics',
+    fr: 'Mathématiques Complémentaires',
+  },
+  {
+    patterns: [/\bprobabilit(?:y|ies|[ée]s)\s*(?:&|and|et)?\s*(?:stat(?:istics|s|istiques)?)?\b/i],
+    en: 'Probability & Statistics',
+    fr: 'Probabilités & Stats',
+  },
+  {
+    patterns: [/\bglobal\s+perspectives?\b/i, /\bperspectives?\s+globales?\b/i],
+    en: 'Global Perspectives',
+    fr: 'Perspectives Globales',
+  },
+  {
+    patterns: [/\bsocial\s+studies?\b/i, /\b[ée]tudes?\s+sociales?\b/i],
+    en: 'Social Studies',
+    fr: 'Études Sociales',
+  },
+  {
+    patterns: [/\bcomputer\s+science\b/i, /\bcomput(?:ing|er)\b/i, /\binformatique\b/i, /\bcoding\b/i],
+    en: 'Computing',
+    fr: 'Informatique',
+  },
+  {
+    patterns: [/\bchem(?:istry)?\b/i, /\bchimie\b/i],
+    en: 'Chemistry',
+    fr: 'Chimie',
+  },
+  {
+    patterns: [/\bphysic(?:s)?\b/i, /\bphysique\b/i],
+    en: 'Physics',
+    fr: 'Physique',
+  },
+  {
+    patterns: [/\bbiolog(?:y|ie)\b/i, /\bsvt\b/i],
+    en: 'Biology',
+    fr: 'Biologie',
+  },
+  {
+    patterns: [/\bmath(?:ematics|s)?\b/i, /\bmath[ée]matiques?\b/i],
+    en: 'Mathematics',
+    fr: 'Mathématiques',
+  },
+  {
+    patterns: [/\benglish\b/i, /\banglais\b/i],
+    en: 'English',
+    fr: 'Anglais',
+  },
+  {
+    patterns: [/\bfrench\b/i, /\bfran[çc]ais\b/i],
+    en: 'French',
+    fr: 'Français',
+  },
+  {
+    patterns: [/\bhistor(?:y|ie)\b/i, /\bhistoire\b/i],
+    en: 'History',
+    fr: 'Histoire',
+  },
+  {
+    patterns: [/\bgeograph(?:y|ie)\b/i, /\bg[ée]ographie\b/i],
+    en: 'Geography',
+    fr: 'Géographie',
+  },
+  {
+    patterns: [/\beconomic(?:s)?\b/i, /\b[ée]conomie\b/i],
+    en: 'Economics',
+    fr: 'Économie',
+  },
+  {
+    patterns: [/\bscience(?:s)?\b/i],
+    en: 'Science',
+    fr: 'Sciences',
+  },
+  {
+    patterns: [/\bgeneral\b/i, /\bg[ée]n[ée]ral\b/i, /\btextbooks?\b/i, /\bmanuels?\b/i],
+    en: 'General Textbooks',
+    fr: 'Livres généraux',
+  },
+] as const;
+
+export function cleanSubjectName(rawSubject: string, lang: 'en' | 'fr' = 'en'): string {
+  if (!rawSubject || typeof rawSubject !== 'string') {
     return lang === 'fr' ? 'Livres généraux' : 'General Textbooks';
   }
-  const lower = clean.toLowerCase();
-  if (lower.includes('further math')) return lang === 'fr' ? 'Mathématiques Complémentaires' : 'Further Mathematics';
-  if (lower.includes('chimie') || lower.includes('chemistry')) return lang === 'fr' ? 'Chimie' : 'Chemistry';
-  if (lower.includes('math')) return lang === 'fr' ? 'Mathématiques' : 'Mathematics';
-  if (lower.includes('physiq') || lower.includes('physic')) return lang === 'fr' ? 'Physique' : 'Physics';
-  if (lower.includes('biolog')) return lang === 'fr' ? 'Biologie' : 'Biology';
-  if (lower.includes('anglais') || lower.includes('english')) return lang === 'fr' ? 'Anglais' : 'English';
-  if (lower.includes('français') || lower.includes('francais') || lower.includes('french')) return lang === 'fr' ? 'Français' : 'French';
-  if (lower.includes('comput') || lower.includes('informatiq') || lower.includes('coding')) return lang === 'fr' ? 'Informatique' : 'Computing';
-  if (lower.includes('global perspective') || lower.includes('perspectives globales')) return lang === 'fr' ? 'Perspectives Globales' : 'Global Perspectives';
-  if (lower.includes('social stud') || lower.includes('études sociales') || lower.includes('etudes sociales')) return lang === 'fr' ? 'Études Sociales' : 'Social Studies';
-  if (lower.includes('histor') || lower.includes('histoire')) return lang === 'fr' ? 'Histoire' : 'History';
-  if (lower.includes('geograph') || lower.includes('géographie') || lower.includes('geographie')) return lang === 'fr' ? 'Géographie' : 'Geography';
-  if (lower.includes('econom') || lower.includes('économie') || lower.includes('economie')) return lang === 'fr' ? 'Économie' : 'Economics';
-  if (lower.includes('science')) return lang === 'fr' ? 'Sciences' : 'Science';
-  if (lower.includes('probability') || lower.includes('probabilit')) return lang === 'fr' ? 'Probabilités & Stats' : 'Probability & Statistics';
-  if (lower.includes('general') || lower.includes('général') || lower.includes('general textbook')) return lang === 'fr' ? 'Livres généraux' : 'General Textbooks';
 
-  return clean.charAt(0).toUpperCase() + clean.slice(1);
+  // 1. Separate camelCase and number boundaries (e.g. "Year5Chemistry" -> "Year 5 Chemistry")
+  const spaced = rawSubject
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([a-zA-Z])(\d)/g, '$1 $2')
+    .replace(/(\d)([a-zA-Z])/g, '$1 $2')
+    .trim();
+
+  // 2. Strip boilerplate prefixes & suffixes
+  const stripped = spaced
+    .replace(
+      /^(?:books?\s+(?:for|of|in|de|pour|d')?|livres?\s+(?:de|pour|d'|in)?|textbooks?\s+(?:for|of)?)\s*(?:(?:the\s+)?(?:year|année|classe|grade)\s*\d{1,2}\s*)?/i,
+      ''
+    )
+    .replace(/\s*(?:coursebook|learner's\s+book|student\s+book|textbook|workbook|livre|manuel|guide)$/i, '')
+    .trim();
+
+  if (!stripped || /^books?$|^livres?$/i.test(stripped)) {
+    return lang === 'fr' ? 'Livres généraux' : 'General Textbooks';
+  }
+
+  // 3. Declarative match against canonical catalog
+  for (const def of SUBJECT_CATALOG) {
+    if (def.patterns.some((pattern) => pattern.test(stripped) || pattern.test(spaced))) {
+      return def[lang];
+    }
+  }
+
+  // 4. Fallback: Clean title case
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
 }
 
 export function formatDemandDisplay(
