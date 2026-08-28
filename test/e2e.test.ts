@@ -371,16 +371,20 @@ test('48h hold expiration: sweeps and releases expired holds back to active inve
   const sellerPhone = '+15552223344';
   const buyerPhone = '+15552223355';
 
-  // 1. Create demand & matching item
-  const demand = await api.createDemand(buyerPhone, 'Year 9 Biology', 'Year9Biology', 'Science');
+  // 1. Create demand & matching item via natural WhatsApp webhook
   await api.handleWebhook({
+    from_phone: buyerPhone,
+    message_text: 'Looking for Year 9 Biology please',
+  });
+  const matchRes = await api.handleWebhook({
     from_phone: sellerPhone,
     message_text: 'I have Year 9 Biology textbook available',
   });
 
   // Verify book is reserved
   const sellerBooks = await api.listInventoryBySeller(sellerPhone);
-  const reservedBook = sellerBooks.find(b => b.status === 'reserved') || sellerBooks.find(b => b.concept?.includes('Biology')) || sellerBooks[sellerBooks.length - 1];
+  const matchedBookId = matchRes.result?.itemId || matchRes.result?.matchedItems?.[0]?.itemId;
+  const reservedBook = (matchedBookId ? sellerBooks.find(b => b.itemId === matchedBookId) : null) || sellerBooks.find(b => b.status === 'reserved') || sellerBooks[sellerBooks.length - 1];
   assert.ok(reservedBook, 'Reserved book must exist');
   assert.strictEqual(reservedBook.status, 'reserved');
 
@@ -389,7 +393,9 @@ test('48h hold expiration: sweeps and releases expired holds back to active inve
   assert.ok(typeof sweepRes.releasedCount === 'number');
 
   // 3. Test explicit releaseHold
-  await api.releaseHold({ itemId: reservedBook.itemId, demandId: demand.demandId });
+  const allDemands = await api.listDemands();
+  const buyerDemand = allDemands.find(d => d.userPhone === buyerPhone);
+  await api.releaseHold({ itemId: reservedBook.itemId, demandId: buyerDemand?.demandId });
 
   // 4. Verify book returned to active status
   const updatedBooks = await api.listInventoryBySeller(sellerPhone);
@@ -399,8 +405,8 @@ test('48h hold expiration: sweeps and releases expired holds back to active inve
   assert.strictEqual(releasedBook?.reservedForPhone, undefined);
 
   // 5. Verify demand returned to pending status
-  const demands = await api.listDemands();
-  const updatedDemand = demands.find(d => d.demandId === demand.demandId);
+  const finalDemands = await api.listDemands();
+  const updatedDemand = finalDemands.find(d => d.userPhone === buyerPhone);
   assert.strictEqual(updatedDemand?.status, 'pending');
 });
 
