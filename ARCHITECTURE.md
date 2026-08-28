@@ -47,12 +47,21 @@ flowchart TD
             T2["📋 listDemands"]
             T3["➕ createDemand"]
             T4["📚 registerBookOffer"]
+        subgraph Tools["Agent Tool Ecosystem (Zod)"]
+            T1["🔍 searchInventory"]
+            T2["📋 listDemands"]
+            T3["➕ createDemand"]
+            T4["📚 registerBookOffer"]
             T5["👨‍👩‍👧 getSellerCatalog"]
+            T6["📢 getSupplyDeficits"]
         end
         
+        SubCatalog["📖 Declarative SUBJECT_CATALOG\n(4-Stage Regex Normalizer & Translator)"]
+        Matchmaker["🎯 Proactive Matchmaker\n(GSI byConcept + 4-Digit Handover Code)"]
+        HoldCron["⏰ EventBridge CronJob: holdExpiryCron\n(rate: 15 mins • Automated Hold Sweeper)"]
+        InteractiveUX["📱 Meta Interactive List & 2-Button Cards\n(2-Tier Drawer + Safety Confirmation)"]
+        Outbound["📤 WhatsApp Outbound Dispatcher\n(sendWhatsAppTextMessage & Interactive)"]
         DurableEngine["⚙️ Lambda Durable Step Engine\n(withDurableExecution & Idempotency)"]
-        Matchmaker["🎯 Proactive Matchmaker\n(GSI byConcept + 48H Hold)"]
-        Outbound["📤 WhatsApp Outbound Dispatcher\n(sendWhatsAppTextMessage)"]
     end
 
     subgraph Layer4["4. Persistence, Vectors & Observability"]
@@ -60,9 +69,9 @@ flowchart TD
         DynamoDemand[("📋 DynamoDB: demand-board\nPK: demandId | GSI: byConcept\nStatus: pending, matched, fulfilled")]
         S3Bucket[("🖼️ S3: parent-book-images\n⏳ 30-Day Auto-Expiration Policy")]
         VectorKB[("🧠 Bedrock KnowledgeBase\n✂️ <= 2048 Byte Chunk Limit")]
-        EventBridge["📡 EventBridge Lifecycle Stream\n(ProcessingStarted, MatchFound, etc.)"]
+        EventBridge["📡 EventBridge Lifecycle Stream\n(ProcessingStarted, MatchFound, HoldExpired, etc.)"]
         CloudWatch["📈 CloudWatch EMF Metrics\n(Namespace: BooksApp/WhatsAppMarketplace)"]
-        XRay["🔍 AWS X-Ray Tracing\n(End-to-End Traces)"]
+        XRay["🔍 AWS X-Ray Tracing\n(End-to-End Distributed Traces)"]
     end
 
     Parent -->|1. Natural Text / Photo| MetaAPI
@@ -79,12 +88,17 @@ flowchart TD
     T3 --> DynamoDemand
     T4 --> DynamoInv
     T5 <--> DynamoInv
+    T6 <--> DynamoDemand
     
-    AgentCore --> DurableEngine
-    DurableEngine --> Matchmaker
+    AgentCore --> SubCatalog
+    SubCatalog --> Matchmaker
     Matchmaker -->|Lock 48H Hold| DynamoInv
-    Matchmaker --> Outbound
-    Outbound -->|6. WhatsApp Match Alert| MetaAPI
+    Matchmaker -->|Update Demand| DynamoDemand
+    HoldCron -->|15-Min Sweep Expired Holds| DynamoInv
+    HoldCron -->|Reset Stale Wishlists| DynamoDemand
+    Matchmaker --> InteractiveUX
+    InteractiveUX --> Outbound
+    Outbound -->|6. WhatsApp Outbound Message| MetaAPI
     MetaAPI -->|7. Delivery| Parent
 
     AgentCore -->|Streaming Chunks| WS
@@ -104,9 +118,10 @@ flowchart TD
 
 ### Layer 1: Ingress, Clients & Ingestion
 * **Parent Community (WhatsApp):** Primary consumer interface. Parents upload book cover photos or send natural language messages in English or French without learning commands.
-* **Meta WhatsApp Cloud API (Graph API v25.0):** Inbound webhooks sent to API Gateway with cryptographic signature headers (`X-Hub-Signature-256`).
+* **Meta WhatsApp Cloud API (Graph API v25.0):** Inbound webhooks sent to API Gateway with cryptographic signature headers (`X-Hub-Signature-256`), receiving 2-tier interactive list drawers and 2-button confirmation cards.
 * **Web Single Page Application:** Deployed via Amazon CloudFront and S3 static hosting, offering parent catalog browsing, seller storefront grade bundles, and live Strands Agent chat.
 * **WebSocket Realtime Stream:** Powered by `@aws-blocks/bb-realtime`, streaming LLM tokens/blocks to the browser in real time.
+* **AWS Secrets Manager:** Dynamically caches Meta WhatsApp API tokens with 5-minute in-memory TTL caching.
 
 ---
 
