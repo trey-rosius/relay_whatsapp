@@ -1341,7 +1341,31 @@ function renderMatchedDemandsTab() {
             Demands matched with available books. Holds automatically release after 48 hours if handover is not confirmed.
           </p>
         </div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button
+            class="secondary sm"
+            style="background:rgba(16,185,129,0.15);color:#34d399;border:1px solid rgba(16,185,129,0.35);"
+            title="Seed 22 rich, realistic demo matched records for student presentations"
+            @click=${async () => {
+              const res = await api.seedDemoMatches();
+              setBannerMessage(`🌱 Seeded ${res.count} demo matches in active 48-hour hold state!`);
+              await loadData();
+            }}
+          >
+            🌱 Seed 22 Matches
+          </button>
+          <button
+            class="secondary sm"
+            style="background:rgba(239,68,68,0.1);color:#f87171;border:1px solid rgba(239,68,68,0.25);"
+            title="Clear all seeded demo match records"
+            @click=${async () => {
+              const res = await api.clearDemoMatches();
+              setBannerMessage(`🧹 Cleared ${res.count} demo matches from database.`);
+              await loadData();
+            }}
+          >
+            🗑️ Clear Demo
+          </button>
           <button
             class="secondary sm"
             title="Proactively sweep and release all expired 48H holds"
@@ -1351,7 +1375,7 @@ function renderMatchedDemandsTab() {
               await loadData();
             }}
           >
-            🧹 Sweep Expired Holds
+            🧹 Sweep Holds
           </button>
           <button class="secondary sm" @click=${loadData}>
             ${isLoading ? '⏳ Refreshing...' : '🔄 Refresh'}

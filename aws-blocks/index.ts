@@ -2895,6 +2895,71 @@ Vous avez des livres ? Répondez avec des photos pour aider les parents en atten
     return { success: true, ...payload };
   },
 
+  /** Seed 22 rich, realistic demo match records for live student presentations */
+  async seedDemoMatches() {
+    const now = Date.now();
+    let seeded = 0;
+
+    for (const d of DEMO_MATCH_DATA) {
+      const matchTimestamp = now - d.hoursAgo * 3600 * 1000;
+      const holdExpires = now + (48 - d.hoursAgo) * 3600 * 1000;
+      const isPrimary = /(?:Year\s*[1-5]|Primary)/i.test(d.concept) || /(?:Year\s*[1-5]|Primary)/i.test(d.title);
+      const isMiddle = /(?:Year\s*[6-9]|6eme|5eme|4eme|3eme|Middle)/i.test(d.concept) || /(?:Year\s*[6-9]|6eme|5eme|4eme|3eme|Checkpoint)/i.test(d.title);
+      const providerCat: (typeof PROVIDER_CATEGORIES)[number] = isPrimary ? 'PrimarySchool' : isMiddle ? 'MiddleSchool' : 'HighSchool';
+
+      // 1. Put Active Inventory Item in reserved status
+      await activeInventory.put({
+        itemId: `item_${d.id}`,
+        title: d.title,
+        domain: d.domain,
+        providerCategory: providerCat,
+        concept: d.concept,
+        conditionType: d.condition,
+        description: `Verified authentic school curriculum textbook. Available for school pickup.`,
+        sellerPhone: d.sellerPhone,
+        status: 'reserved',
+        preferredLang: d.lang,
+        reservedUntil: holdExpires,
+        reservedForPhone: d.buyerPhone,
+        matchedDemandId: `demand_${d.id}`,
+        handoverCode: d.code,
+        createdAt: matchTimestamp,
+      });
+
+      // 2. Put Demand Board item in matched status
+      await demandBoard.put({
+        demandId: `demand_${d.id}`,
+        userPhone: d.buyerPhone,
+        requestedQuery: d.query,
+        concept: d.concept,
+        domain: d.domain,
+        status: 'matched',
+        preferredLang: d.lang,
+        matchedItemId: `item_${d.id}`,
+        matchedAt: matchTimestamp,
+        handoverCode: d.code,
+        createdAt: matchTimestamp,
+      });
+
+      seeded++;
+    }
+
+    return { success: true, count: seeded };
+  },
+
+  /** Clear all demo match records to cleanly revert back to original state */
+  async clearDemoMatches() {
+    let removed = 0;
+    for (const d of DEMO_MATCH_DATA) {
+      try {
+        await activeInventory.delete({ itemId: `item_${d.id}` });
+        await demandBoard.delete({ demandId: `demand_${d.id}` });
+        removed++;
+      } catch {}
+    }
+    return { success: true, count: removed };
+  },
+
   /** Security & Observability System Status */
   async getSecurityObservabilityStatus() {
     const creds = await getWhatsAppCredentials();
@@ -2909,6 +2974,295 @@ Vous avez des livres ? Répondez avec des photos pour aider les parents en atten
     };
   },
 }));
+
+export const DEMO_MATCH_DATA = [
+  {
+    id: 'demo_match_01',
+    title: "Cambridge Primary Mathematics Learner's Book 3",
+    concept: 'Year3Mathematics',
+    domain: 'Mathematics' as const,
+    condition: 'LikeNew' as const,
+    sellerPhone: '+237677102938',
+    buyerPhone: '+237699482019',
+    code: '4821',
+    lang: 'en' as const,
+    hoursAgo: 2,
+    query: 'Year 3 Mathematics (Cambridge Primary)',
+  },
+  {
+    id: 'demo_match_02',
+    title: 'Cambridge Primary Science Stage 4 Coursebook',
+    concept: 'Year4Science',
+    domain: 'Science' as const,
+    condition: 'Good' as const,
+    sellerPhone: '+237675992011',
+    buyerPhone: '+237694883012',
+    code: '7193',
+    lang: 'en' as const,
+    hoursAgo: 4,
+    query: "Year 4 Science Learner's Book",
+  },
+  {
+    id: 'demo_match_03',
+    title: 'Cambridge Global English Stage 5 Activity Book',
+    concept: 'Year5English',
+    domain: 'Languages' as const,
+    condition: 'New' as const,
+    sellerPhone: '+237670112233',
+    buyerPhone: '+237690445566',
+    code: '1044',
+    lang: 'en' as const,
+    hoursAgo: 6,
+    query: 'Year 5 English Coursebook',
+  },
+  {
+    id: 'demo_match_04',
+    title: 'Mathématiques 6ème (Collection Diabolo - Hachette)',
+    concept: '6emeMathematiques',
+    domain: 'Mathematics' as const,
+    condition: 'LikeNew' as const,
+    sellerPhone: '+237691234567',
+    buyerPhone: '+237672345678',
+    code: '8392',
+    lang: 'fr' as const,
+    hoursAgo: 7,
+    query: 'Livre de Mathématiques 6ème',
+  },
+  {
+    id: 'demo_match_05',
+    title: 'Cambridge Checkpoint Science Coursebook 7 (Biology)',
+    concept: 'Year7Biology',
+    domain: 'Science' as const,
+    condition: 'Good' as const,
+    sellerPhone: '+237678129034',
+    buyerPhone: '+237697451029',
+    code: '3409',
+    lang: 'en' as const,
+    hoursAgo: 8,
+    query: 'Year 7 Biology textbook',
+  },
+  {
+    id: 'demo_match_06',
+    title: 'Cambridge Lower Secondary Complete Chemistry 8',
+    concept: 'Year8Chemistry',
+    domain: 'Science' as const,
+    condition: 'LikeNew' as const,
+    sellerPhone: '+237674001928',
+    buyerPhone: '+237693881029',
+    code: '9215',
+    lang: 'en' as const,
+    hoursAgo: 10,
+    query: 'Year 8 Chemistry (Cambridge Lower Secondary)',
+  },
+  {
+    id: 'demo_match_07',
+    title: 'Cambridge Lower Secondary Complete Physics 8',
+    concept: 'Year8Physics',
+    domain: 'Science' as const,
+    condition: 'Acceptable' as const,
+    sellerPhone: '+237679883344',
+    buyerPhone: '+237691772211',
+    code: '6048',
+    lang: 'en' as const,
+    hoursAgo: 12,
+    query: 'Year 8 Physics Coursebook',
+  },
+  {
+    id: 'demo_match_08',
+    title: 'Sciences de la Vie et de la Terre (SVT) 5ème (Bordas)',
+    concept: '5emeSVT',
+    domain: 'Science' as const,
+    condition: 'Good' as const,
+    sellerPhone: '+237692110099',
+    buyerPhone: '+237671334455',
+    code: '5182',
+    lang: 'fr' as const,
+    hoursAgo: 13,
+    query: 'Manuel SVT 5ème collège',
+  },
+  {
+    id: 'demo_match_09',
+    title: 'Computer Science for Cambridge Lower Secondary 9',
+    concept: 'Year9ComputerScience',
+    domain: 'Science' as const,
+    condition: 'New' as const,
+    sellerPhone: '+237676554433',
+    buyerPhone: '+237695221100',
+    code: '2741',
+    lang: 'en' as const,
+    hoursAgo: 15,
+    query: 'Year 9 Computer Science with Python',
+  },
+  {
+    id: 'demo_match_10',
+    title: 'Cambridge Lower Secondary History Coursebook 9',
+    concept: 'Year9History',
+    domain: 'Humanities' as const,
+    condition: 'Good' as const,
+    sellerPhone: '+237673998877',
+    buyerPhone: '+237692887766',
+    code: '4930',
+    lang: 'en' as const,
+    hoursAgo: 16,
+    query: 'Year 9 History & World Civilizations',
+  },
+  {
+    id: 'demo_match_11',
+    title: 'Cambridge IGCSE Mathematics Extended (0580) Coursebook',
+    concept: 'Year10Mathematics',
+    domain: 'Mathematics' as const,
+    condition: 'LikeNew' as const,
+    sellerPhone: '+237678443322',
+    buyerPhone: '+237697110022',
+    code: '8429',
+    lang: 'en' as const,
+    hoursAgo: 18,
+    query: 'Year 10 IGCSE Mathematics Extended (0580)',
+  },
+  {
+    id: 'demo_match_12',
+    title: 'Cambridge IGCSE Physics (0625) Coursebook with CD-ROM',
+    concept: 'Year10Physics',
+    domain: 'Science' as const,
+    condition: 'Good' as const,
+    sellerPhone: '+237674221199',
+    buyerPhone: '+237693554488',
+    code: '1397',
+    lang: 'en' as const,
+    hoursAgo: 20,
+    query: 'Year 10 IGCSE Physics Coursebook',
+  },
+  {
+    id: 'demo_match_13',
+    title: 'Physique-Chimie 3ème (Collection Microméga - Hatier)',
+    concept: '3emePhysiqueChimie',
+    domain: 'Science' as const,
+    condition: 'LikeNew' as const,
+    sellerPhone: '+237690332211',
+    buyerPhone: '+237679665544',
+    code: '7620',
+    lang: 'fr' as const,
+    hoursAgo: 21,
+    query: 'Livre Physique-Chimie 3ème Brevet',
+  },
+  {
+    id: 'demo_match_14',
+    title: 'Cambridge IGCSE and O Level Economics (0455) 2nd Edition',
+    concept: 'Year11Economics',
+    domain: 'Humanities' as const,
+    condition: 'Good' as const,
+    sellerPhone: '+237671887766',
+    buyerPhone: '+237690998877',
+    code: '3184',
+    lang: 'en' as const,
+    hoursAgo: 23,
+    query: 'Year 11 IGCSE Economics (0455)',
+  },
+  {
+    id: 'demo_match_15',
+    title: 'Cambridge IGCSE French as a Foreign Language Coursebook',
+    concept: 'Year11French',
+    domain: 'Languages' as const,
+    condition: 'New' as const,
+    sellerPhone: '+237675112244',
+    buyerPhone: '+237694334466',
+    code: '9502',
+    lang: 'en' as const,
+    hoursAgo: 24,
+    query: 'Year 11 French Foreign Language',
+  },
+  {
+    id: 'demo_match_16',
+    title: 'Cambridge IGCSE Geography (0460) Coursebook',
+    concept: 'Year11Geography',
+    domain: 'Humanities' as const,
+    condition: 'Acceptable' as const,
+    sellerPhone: '+237677665522',
+    buyerPhone: '+237696443311',
+    code: '4816',
+    lang: 'en' as const,
+    hoursAgo: 26,
+    query: 'Year 11 IGCSE Geography Coursebook',
+  },
+  {
+    id: 'demo_match_17',
+    title: 'Français 2nde (Textes et Méthodes - Nathan)',
+    concept: '2ndeFrancais',
+    domain: 'Languages' as const,
+    condition: 'LikeNew' as const,
+    sellerPhone: '+237691882233',
+    buyerPhone: '+237670771144',
+    code: '6301',
+    lang: 'fr' as const,
+    hoursAgo: 28,
+    query: 'Manuel Français 2nde Lycée',
+  },
+  {
+    id: 'demo_match_18',
+    title: 'Cambridge International AS & A Level Mathematics: Pure 1 (9709)',
+    concept: 'Year12Mathematics',
+    domain: 'Mathematics' as const,
+    condition: 'New' as const,
+    sellerPhone: '+237673119988',
+    buyerPhone: '+237692008877',
+    code: '5923',
+    lang: 'en' as const,
+    hoursAgo: 30,
+    query: 'Year 12 AS Level Pure Mathematics 1 (9709)',
+  },
+  {
+    id: 'demo_match_19',
+    title: 'Cambridge International AS & A Level Chemistry (9701 Coursebook)',
+    concept: 'Year12Chemistry',
+    domain: 'Science' as const,
+    condition: 'LikeNew' as const,
+    sellerPhone: '+237678556677',
+    buyerPhone: '+237697334455',
+    code: '2084',
+    lang: 'en' as const,
+    hoursAgo: 32,
+    query: 'Year 12 AS Level Chemistry Coursebook',
+  },
+  {
+    id: 'demo_match_20',
+    title: 'Mathématiques 1ère Spécialité (Collection Déclic - Hachette)',
+    concept: '1ereMathematiques',
+    domain: 'Mathematics' as const,
+    condition: 'Good' as const,
+    sellerPhone: '+237690441122',
+    buyerPhone: '+237679330011',
+    code: '7419',
+    lang: 'fr' as const,
+    hoursAgo: 34,
+    query: 'Livre Mathématiques 1ère Spécialité',
+  },
+  {
+    id: 'demo_match_21',
+    title: 'Cambridge International AS & A Level Physics (9702 Coursebook)',
+    concept: 'Year13Physics',
+    domain: 'Science' as const,
+    condition: 'Good' as const,
+    sellerPhone: '+237674889900',
+    buyerPhone: '+237693778899',
+    code: '8935',
+    lang: 'en' as const,
+    hoursAgo: 36,
+    query: 'Year 13 A Level Physics (9702 Coursebook)',
+  },
+  {
+    id: 'demo_match_22',
+    title: 'Philosophie Terminale (Manuel Hatier Spécialités & Tronc Commun)',
+    concept: 'TerminalePhilosophie',
+    domain: 'Humanities' as const,
+    condition: 'LikeNew' as const,
+    sellerPhone: '+237698112233',
+    buyerPhone: '+237677001122',
+    code: '1573',
+    lang: 'fr' as const,
+    hoursAgo: 38,
+    query: 'Manuel Philosophie Terminale Bac',
+  },
+];
 
 // ─── 6. RawRoute HTTP Endpoints for WhatsApp Webhooks ──────────────────────────
 

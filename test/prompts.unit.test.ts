@@ -16,6 +16,7 @@ import {
   inferDomainFromConcept,
   formatDemandDisplay,
   parseParentMessageIntentsWithLLM,
+  DEMO_MATCH_DATA,
 } from '../aws-blocks/index.js';
 
 // Helper to compute SHA-256 digest
@@ -758,6 +759,30 @@ test('whatsapp subject catalog: declarative normalization strips suffixes and ha
   assert.strictEqual(cleanSubjectName('', 'fr'), 'Livres généraux');
   assert.strictEqual(cleanSubjectName('Books for Year 4', 'fr'), 'Livres généraux');
 });
+
+test('demo dataset: DEMO_MATCH_DATA contains exactly 22 realistic, bilingual matches across grades', () => {
+  assert.strictEqual(DEMO_MATCH_DATA.length, 22, 'Must contain exactly 22 demo match items');
+
+  const uniqueIds = new Set<string>();
+  const uniqueCodes = new Set<string>();
+
+  for (const item of DEMO_MATCH_DATA) {
+    assert.ok(item.id.startsWith('demo_match_'), `Invalid ID prefix: ${item.id}`);
+    assert.ok(item.title && item.title.length > 5, `Title too short: ${item.title}`);
+    assert.ok(item.concept, `Missing concept for: ${item.id}`);
+    assert.ok(item.sellerPhone.startsWith('+'), `Invalid seller phone: ${item.sellerPhone}`);
+    assert.ok(item.buyerPhone.startsWith('+'), `Invalid buyer phone: ${item.buyerPhone}`);
+    assert.ok(/^\d{4}$/.test(item.code), `Handover code must be 4 digits: ${item.code}`);
+    assert.ok(item.hoursAgo >= 1 && item.hoursAgo <= 46, `hoursAgo out of range: ${item.hoursAgo}`);
+
+    assert.ok(!uniqueIds.has(item.id), `Duplicate demo ID: ${item.id}`);
+    assert.ok(!uniqueCodes.has(item.code), `Duplicate handover code: ${item.code}`);
+
+    uniqueIds.add(item.id);
+    uniqueCodes.add(item.code);
+  }
+});
+
 
 
 
