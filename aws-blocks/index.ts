@@ -838,16 +838,25 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         });
       });
 
-      if (extractedIntents[0]?.intent === 'greeting' || extractedIntents[0]?.intent === 'spam') {
+      if (
+        extractedIntents[0]?.intent === 'greeting' ||
+        extractedIntents[0]?.intent === 'spam' ||
+        extractedIntents[0]?.intent === 'offer_inquiry' ||
+        extractedIntents[0]?.intent === 'demand_inquiry'
+      ) {
         const lang = extractedIntents[0].lang || 'en';
-        const replyMsg = extractedIntents[0].replyMessage || (await generateLLMMessage('greeting', { lang }));
+        const replyMsg =
+          extractedIntents[0].replyMessage || (await generateLLMMessage('greeting', { lang }));
         await sendWhatsAppTextMessage(payload.from_phone, replyMsg);
-        
+
         const duration = Date.now() - startTime;
-        metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'greeting' } });
+        metrics.emit('WorkflowCompletionTime', duration, {
+          unit: 'Milliseconds',
+          dimensions: { outcome: extractedIntents[0].intent },
+        });
 
         return {
-          status: extractedIntents[0].intent as 'greeting' | 'spam',
+          status: (extractedIntents[0].intent === 'offer_inquiry' || extractedIntents[0].intent === 'demand_inquiry' ? 'processed' : extractedIntents[0].intent) as any,
           replyMessage: replyMsg,
           extractedIntentsCount: 1,
           vectorChunksCount: 0,
@@ -855,12 +864,20 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
       }
 
       // Conversational Year Validation: If parent offers or seeks a book with NO school year specified
-      const firstOfferOrDemand = extractedIntents.find(i => i.intent === 'offer' || i.intent === 'demand');
+      const firstOfferOrDemand = extractedIntents.find((i): i is ExtractedIntentItem & { intent: 'offer' | 'demand' } => i.intent === 'offer' || i.intent === 'demand');
       if (firstOfferOrDemand && !hasExplicitSchoolYear(firstOfferOrDemand.concept, payload.message_text || '')) {
         const lang: 'en' | 'fr' = firstOfferOrDemand.lang === 'fr' ? 'fr' : 'en';
+        const hasSpecificSubject =
+          firstOfferOrDemand.concept !== 'GeneralBooks' &&
+          firstOfferOrDemand.concept !== 'GeneralScience' &&
+          firstOfferOrDemand.concept !== 'GeneralSchoolBooks' &&
+          !/^general/i.test(firstOfferOrDemand.concept) &&
+          !firstOfferOrDemand.concept.endsWith('Books');
+
         const clarificationMsg = await generateLLMMessage('year_clarification', {
-          title: firstOfferOrDemand.title,
-          subject: firstOfferOrDemand.domain,
+          intentType: firstOfferOrDemand.intent,
+          title: hasSpecificSubject ? firstOfferOrDemand.title : undefined,
+          subject: hasSpecificSubject ? firstOfferOrDemand.domain : undefined,
           lang,
         });
         await sendWhatsAppTextMessage(payload.from_phone, clarificationMsg);
@@ -882,6 +899,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
       let lastMatchedDemandId: string | undefined;
       let lastReplyMessage: string | undefined;
       let totalVectorChunks = 0;
+      const newlyAddedBooks: { id: string; title: string }[] = [];
 
       // Step 3 & 4: Iterate over each extracted item in the message
       for (let idx = 0; idx < extractedIntents.length; idx++) {
@@ -1258,8 +1276,13 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                 });
                 metrics.emit('InventoryAddedCount', 1, { unit: 'Count' });
 
-                const activeMsg = await generateLLMMessage('listing_active', { title: item.title, lang: item.lang });
-                await sendWhatsAppTextMessage(payload.from_phone, activeMsg);
+                newlyAddedBooks.push({ id, title: item.title });
+
+                if (extractedIntents.filter(i => i.intent === 'offer').length === 1) {
+                  const activeMsg = await generateLLMMessage('listing_active', { title: item.title, lang: item.lang });
+                  await sendWhatsAppTextMessage(payload.from_phone, activeMsg);
+                  lastReplyMessage = activeMsg;
+                }
 
                 return id;
               });
@@ -1292,6 +1315,17 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
           totalVectorChunks += chunksCount;
         }
+      }
+
+      // Send consolidated batch confirmation if multiple books were added
+      if (newlyAddedBooks.length > 1) {
+        const isFr = extractedIntents[0]?.lang === 'fr';
+        const bookBullets = newlyAddedBooks.map((b) => `• ${b.title}`).join('\n');
+        const batchMsg = isFr
+          ? `📚 *${newlyAddedBooks.length} livres ajoutés au catalogue scolaire !*\n\n${bookBullets}\n\n🤝 Merci de partager ! Nous vous avertirons automatiquement dès qu'un parent demandera l'un de ces livres.`
+          : `📚 *${newlyAddedBooks.length} books listed in school catalog!*\n\n${bookBullets}\n\n🤝 Thank you for sharing! We will notify you automatically as soon as another parent requests any of these books.`;
+        await sendWhatsAppTextMessage(payload.from_phone, batchMsg);
+        lastReplyMessage = batchMsg;
       }
 
       const primaryMetadata = extractedIntents[0] || {
@@ -1333,7 +1367,7 @@ export interface WhatsAppInboundPayload {
 }
 
 export interface ExtractedIntentItem {
-  intent: 'offer' | 'demand' | 'greeting' | 'spam' | 'catalog' | 'demand_board' | 'confirm_handover';
+  intent: 'offer' | 'demand' | 'greeting' | 'spam' | 'catalog' | 'demand_board' | 'confirm_handover' | 'offer_inquiry' | 'demand_inquiry';
   lang: 'en' | 'fr';
   concept: string;
   title: string;
@@ -1383,7 +1417,8 @@ Context Data: ${JSON.stringify(sanitizedParams)}
 Guidelines:
 - Include relevant emojis (📚, 👋, 🤝, 💡).
 - Keep it clear, polite, and direct for parents.
-- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent.
+- If scenario is "listing_active", acknowledge that the parent has listed their book in the school catalog, thank them for sharing with the school community, and explain that we will notify them automatically as soon as another parent requests it.
+- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent. If intentType is "offer", thank them for offering and ask what grade/subject they have; if "demand", ask what grade they need. NEVER say "looking for" if the parent is offering. Do not mention specific subjects unless explicitly provided in Context Data.
 - If phone is provided, instruct them to contact the matching parent.
 - Output ONLY the message text. Do NOT wrap in quotes or code blocks.`;
 }
@@ -1402,7 +1437,14 @@ export async function generateLLMMessage(
     | 'demand_posted'
     | 'listing_active'
     | 'year_clarification',
-  params: { title?: string; phone?: string; lang?: 'en' | 'fr'; subject?: string }
+  params: {
+    title?: string;
+    phone?: string;
+    lang?: 'en' | 'fr';
+    subject?: string;
+    intentType?: 'offer' | 'demand';
+    [key: string]: unknown;
+  }
 ): Promise<string> {
   if (scenario === 'greeting') {
     return getHelpMessage(params.lang || 'en');
@@ -1410,10 +1452,13 @@ export async function generateLLMMessage(
 
   return await tracer.startSegment('bedrock_generate_llm_message', async (segment) => {
     const lang = params.lang || 'en';
-    const sanitizedParams = {
-      ...params,
-      phone: params.phone ? `+${params.phone.slice(-4)} (redacted)` : undefined,
-    };
+    const sanitizedParams = { ...params };
+    delete sanitizedParams.lang;
+
+    // Mask phone number before sending to Bedrock
+    if (sanitizedParams.phone && typeof sanitizedParams.phone === 'string') {
+      sanitizedParams.phone = maskPromptPII(sanitizedParams.phone);
+    }
 
     const prompt = buildLLMMessagePrompt(scenario, lang, sanitizedParams);
 
@@ -1446,7 +1491,7 @@ export async function generateLLMMessage(
 
       const text = response.output?.message?.content?.[0]?.text?.trim();
       if (text) {
-        // Re-inject real phone number into the generated response safely in application layer
+        // Restore real phone number in output if redacted
         if (params.phone) {
           return text.replace(/\+\d+\s*\(redacted\)/gi, params.phone);
         }
@@ -1485,30 +1530,34 @@ export async function generateLLMMessage(
 export function buildIntentClassificationPrompt(sanitizedText: string): string {
   return `You are an AI intent classification engine for a bilingual (English & French) parent school book marketplace bot on WhatsApp.
 
-Analyze the user's message semantically. Do NOT rely on simple keyword matching — understand the true intent from full sentence context.
+Analyze the user's message semantically. Understand typos, slang, informal language, abbreviations, contractions, and true intent from full sentence context.
 
 Categories of intent:
 1. "greeting": Chit-chat, greetings ("hi", "hello", "bonjour", "salut"), tutorials, or help requests ("how do i use this app", "how to use", "tutorials", "tutoriel", "help", "guide").
 2. "catalog": Asking to see available books in stock ("catalog", "catalogue", "what books are available").
 3. "demand_board": Asking to see what books other parents need ("demand board", "wishlist", "demandes").
-4. "offer": The user HAS, IS SELLING, GIVING AWAY, OR LISTING a book for others (e.g., "I have Year 6 books", "J'ai un livre de maths", "Year 5 textbook available").
-5. "demand": The user IS LOOKING FOR, NEEDING, WANTING, OR ASKING TO BUY/GET a book (e.g., "Looking year 6 books", "Je cherche livre de chimie", "where can I get year 10 physics", "anyone selling year 4?").
+4. "offer_inquiry": The parent states that they want to offer, give away, sell, or donate books, or asks how to offer books, but has NOT yet listed specific titles (e.g., "I'm offering", "ofering", "offereing", "I have books to give", "j'offre des livres", "want to donate books", "selling books", "i have books").
+5. "demand_inquiry": The parent states that they need or are looking for books generally without specifying which book or grade (e.g., "looking for books", "i need books", "je cherche des livres", "need textbooks", "where can i find books").
+6. "offer": The parent is offering/listing one or more specific books or subjects (e.g., "I have Year 6 Maths", "Selling Year 10 Physics", "J'ai un livre de chimie 3ème", "I have chemistry").
+7. "demand": The parent is looking for/requesting one or more specific books or subjects (e.g., "Looking for Year 6 Maths", "Need Year 10 Physics", "Je cherche livre de chimie 3ème", "Looking for chemistry").
+8. "confirm_handover": The parent is confirming that a book was sold, handed over, donated, or delivered to another parent, or that the exchange is complete (e.g., "sold", "vendu", "handed over", "remis au parent", "I gave the book", "got the books", "exchange done", "c'est fait", "livre remis").
 
 User Message: "${sanitizedText.replace(/"/g, '\\"')}"
 
 Rules for fields:
-- "title": MUST be a clear book title (e.g. "Books for Year 7", "Year 5 Chemistry Textbook", "Livres pour l'Année 6"). NEVER output placeholder strings like "Books for Year <N> <Subject>" or "Year N".
-- "concept": MUST be in format "Year<Number><SubjectOrBooks>" (e.g. "Year7Books", "Year5Chemistry", "Year12Mathematics", "GeneralScience"). Never output literal "<N>".
+- MULTI-BOOK EXTRACTION: When a parent lists multiple subjects or books (e.g. "I have year 10 and 11 books: Chemistry, Physics, Additional maths, English, French, ICT, Maths, Economics, Biology"), extract EACH individual book/subject as a separate item in the "intents" array. Apply the specified year(s) to every listed subject (e.g. "Year 10 & 11 Chemistry", "Year 10 & 11 Physics").
+- "title": MUST be a clear book title (e.g. "Books for Year 7", "Year 5 Chemistry Textbook", "Livres pour l'Année 6"). NEVER output placeholder strings like "Books for Year <N> <Subject>" or "Year N". For "offer_inquiry" / "demand_inquiry" / "confirm_handover", use "General Books".
+- "concept": MUST be in format "Year<Number><SubjectOrBooks>" (e.g. "Year7Books", "Year5Chemistry", "Year12Mathematics", "GeneralBooks"). Never output literal "<N>".
 - If no year is specified by the parent (e.g. "Looking for chemistry"), infer the closest subject or use "GeneralChemistry" / "GeneralBooks".
 
 Extract all intents from the message into JSON:
 {
   "intents": [
     {
-      "intent": "offer" | "demand" | "catalog" | "demand_board" | "greeting",
+      "intent": "offer" | "demand" | "offer_inquiry" | "demand_inquiry" | "catalog" | "demand_board" | "greeting" | "confirm_handover",
       "lang": "en" | "fr",
-      "concept": "Year7Books" | "Year5Chemistry" | "Year12Mathematics",
-      "title": "Books for Year 7" | "Year 5 Chemistry Textbook",
+      "concept": "Year7Books" | "Year5Chemistry" | "Year12Mathematics" | "GeneralBooks",
+      "title": "Books for Year 7" | "Year 5 Chemistry Textbook" | "General Books",
       "domain": "Science" | "Languages" | "Mathematics" | "Arts" | "Humanities",
       "providerCategory": "PrimarySchool" | "MiddleSchool" | "HighSchool",
       "conditionType": "Good" | "LikeNew" | "Fair" | "New",
@@ -1521,19 +1570,21 @@ Respond ONLY with valid JSON inside a \`\`\`json block.`;
 }
 
 /**
- * Pure LLM Intent Classifier powered by Amazon Bedrock (Amazon Nova Lite / Nova Pro)
+ * Extracts parent intents and structured book metadata using Amazon Bedrock Nova Foundation Models
  * with pre-prompt PII redaction and Bedrock Guardrails.
  */
 export async function parseParentMessageIntentsWithLLM(text: string): Promise<ExtractedIntentItem[]> {
   return await tracer.startSegment('bedrock_parse_parent_message_intents', async (segment) => {
     // Fast-path for greetings, tutorials, and help questions
     const trimmed = text.trim().toLowerCase();
+    const cleanTrimmed = trimmed.replace(/^[!.,?\s]+|[!.,?\s]+$/g, '').trim();
+
     const isGreetingOrHelp =
-      /^(?:hi|hello|hey|bonjour|salut|coucou|aide|help|tutorial|tutorials|tutoriel|tutoriels|how to use|how do i use|how do i use this app|\?)$/i.test(trimmed) ||
-      /\b(how do i use this app|how to use this app|tutorials?|tutoriels?|comment utiliser|mode d'emploi)\b/i.test(trimmed);
+      /^(?:hi|hello|hey|bonjour|salut|coucou|aide|help|tutorial|tutorials|tutoriel|tutoriels|how to use|how do i use|how do i use this app|\?)$/i.test(cleanTrimmed) ||
+      /\b(how do i use this app|how to use this app|tutorials?|tutoriels?|comment utiliser|mode d'emploi)\b/i.test(cleanTrimmed);
 
     if (isGreetingOrHelp) {
-      const isFr = /\b(?:bonjour|salut|coucou|aide|tutoriel|tutoriels|comment|livres?)\b/i.test(trimmed);
+      const isFr = /\b(?:bonjour|salut|coucou|aide|tutoriel|tutoriels|comment|livres?)\b/i.test(cleanTrimmed);
       const lang = isFr ? 'fr' : 'en';
       return [
         {
@@ -1663,7 +1714,7 @@ export async function parseParentMessageIntentsWithLLM(text: string): Promise<Ex
         new ConverseCommand({
           modelId: 'us.amazon.nova-lite-v1:0',
           messages: [{ role: 'user', content: [{ text: prompt }] }],
-          inferenceConfig: { temperature: 0.1, maxTokens: 500 },
+          inferenceConfig: { temperature: 0.1, maxTokens: 2048 },
           guardrailConfig,
         })
       );
@@ -1677,7 +1728,7 @@ export async function parseParentMessageIntentsWithLLM(text: string): Promise<Ex
         new ConverseCommand({
           modelId: 'us.amazon.nova-pro-v1:0',
           messages: [{ role: 'user', content: [{ text: prompt }] }],
-          inferenceConfig: { temperature: 0.1, maxTokens: 500 },
+          inferenceConfig: { temperature: 0.1, maxTokens: 2048 },
           guardrailConfig,
         })
       );
@@ -1691,25 +1742,82 @@ export async function parseParentMessageIntentsWithLLM(text: string): Promise<Ex
     }
 
     const responseText = response.output?.message?.content?.[0]?.text || '';
-    const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) || responseText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[1] || jsonMatch[0]);
-      if (parsed.intents && Array.isArray(parsed.intents) && parsed.intents.length > 0) {
-        return parsed.intents.map((item: any) => {
-          item.domain = (DOMAIN_TYPES as readonly string[]).includes(item.domain) ? item.domain : 'Science';
-          item.providerCategory = (PROVIDER_CATEGORIES as readonly string[]).includes(item.providerCategory)
-            ? item.providerCategory
-            : 'HighSchool';
-          item.conditionType = (CONDITION_TYPES as readonly string[]).includes(item.conditionType)
-            ? item.conditionType
-            : 'Good';
-          
-          item.concept = normalizeConceptKey(item.concept || '', text);
-          item.title = sanitizeExtractedTitle(item.title || '', text, item.concept, item.lang || 'en');
-          
-          return item;
-        });
+    let extractedIntentsList: any[] = [];
+
+    const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) || responseText.match(/\[[\s\S]*\]/) || responseText.match(/\{[\s\S]*\}/);
+    const targetStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : responseText;
+
+    try {
+      const parsed = JSON.parse(targetStr);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        extractedIntentsList = parsed;
+      } else if (parsed.intents && Array.isArray(parsed.intents) && parsed.intents.length > 0) {
+        extractedIntentsList = parsed.intents;
+      } else if (parsed.items && Array.isArray(parsed.items) && parsed.items.length > 0) {
+        extractedIntentsList = parsed.items;
+      } else if (parsed.intent) {
+        extractedIntentsList = [parsed];
       }
+    } catch (_err) {
+      // Robust recovery for multi-item arrays or malformed blocks
+      const itemMatches = targetStr.matchAll(/\{\s*"intent"\s*:\s*"[^"]+"[\s\S]*?\}/g);
+      for (const match of itemMatches) {
+        try {
+          const item = JSON.parse(match[0]);
+          if (item.intent) {
+            extractedIntentsList.push(item);
+          }
+        } catch {}
+      }
+    }
+
+    if (extractedIntentsList.length > 0) {
+      return extractedIntentsList.map((item: any) => {
+        item.domain = (DOMAIN_TYPES as readonly string[]).includes(item.domain) ? item.domain : 'Science';
+        item.providerCategory = (PROVIDER_CATEGORIES as readonly string[]).includes(item.providerCategory)
+          ? item.providerCategory
+          : 'HighSchool';
+        item.conditionType = (CONDITION_TYPES as readonly string[]).includes(item.conditionType)
+          ? item.conditionType
+          : 'Good';
+        
+        item.concept = normalizeConceptKey(item.concept || '', text);
+        item.title = sanitizeExtractedTitle(item.title || '', text, item.concept, item.lang || 'en');
+        
+        const hasSpecificSubject =
+          item.concept !== 'GeneralBooks' &&
+          item.concept !== 'GeneralScience' &&
+          item.concept !== 'GeneralSchoolBooks' &&
+          !/^general/i.test(item.concept) &&
+          !item.concept.endsWith('Books');
+
+        // Automatically map generic inquiries to offer_inquiry / demand_inquiry
+        if (
+          item.intent === 'offer_inquiry' ||
+          (item.intent === 'offer' && !hasSpecificSubject)
+        ) {
+          item.intent = 'offer_inquiry';
+          if (!item.replyMessage) {
+            item.replyMessage =
+              item.lang === 'fr'
+                ? `👋 Merci de proposer vos livres à notre communauté scolaire ! 📚\n\nVeuillez nous envoyer la liste de vos manuels (ex : *6ème Maths*, *3ème Physique*) ou une photo des couvertures, et nous les ajouterons au catalogue pour les autres parents ! 🤝`
+                : `👋 Thank you for offering books to our school community! 📚\n\nPlease reply with the list of books you have (e.g., *Year 10 Chemistry*, *Year 11 Maths*) or send a photo of the book covers, and we'll automatically list them in the school catalog! 🤝`;
+          }
+        } else if (
+          item.intent === 'demand_inquiry' ||
+          (item.intent === 'demand' && !hasSpecificSubject)
+        ) {
+          item.intent = 'demand_inquiry';
+          if (!item.replyMessage) {
+            item.replyMessage =
+              item.lang === 'fr'
+                ? `👋 Quel manuel ou classe recherchez-vous ? 📚\n\nIndiquez-nous la classe et la matière (ex : *6ème Maths*, *Year 10 Physics*), ou tapez *catalogue* pour voir tous les livres disponibles ! 🔍`
+                : `👋 What book or school year are you looking for? 📚\n\nPlease reply with the grade and subject (e.g. *Year 10 Physics*, *6ème Maths*), or type *catalog* to browse all available books! 🔍`;
+          }
+        }
+
+        return item;
+      });
     }
 
     throw new Error(`[LLM-Parser] Unable to parse online Bedrock response for message: "${text}"`);
@@ -1793,9 +1901,10 @@ export function truncateWhatsAppText(text: string, maxLen: number): string {
 export function inferDomainFromConcept(concept: string): (typeof DOMAIN_TYPES)[number] {
   const lower = concept.toLowerCase();
   if (lower.includes('math')) return 'Mathematics';
-  if (lower.includes('english') || lower.includes('french') || lower.includes('lang') || lower.includes('anglais')) return 'Languages';
-  if (lower.includes('art') || lower.includes('music') || lower.includes('theatre')) return 'Arts';
-  if (lower.includes('history') || lower.includes('geography') || lower.includes('social') || lower.includes('human')) return 'Humanities';
+  if (lower.includes('english') || lower.includes('french') || lower.includes('lang') || lower.includes('anglais') || lower.includes('fran')) return 'Languages';
+  if (lower.includes('art') || lower.includes('music') || lower.includes('theatre') || lower.includes('drama')) return 'Arts';
+  if (lower.includes('history') || lower.includes('geography') || lower.includes('social') || lower.includes('human') || lower.includes('econ') || lower.includes('philosop')) return 'Humanities';
+  if (lower.includes('chem') || lower.includes('physic') || lower.includes('bio') || lower.includes('comput') || lower.includes('ict') || lower.includes('svt') || lower.includes('science')) return 'Science';
   return 'Science';
 }
 
@@ -1815,6 +1924,11 @@ export const SUBJECT_CATALOG: readonly SubjectDefinition[] = [
     fr: 'Mathématiques Complémentaires',
   },
   {
+    patterns: [/\b(?:additional\s+math(?:ematics|s)?|add\s+math(?:s)?)\b/i],
+    en: 'Additional Mathematics',
+    fr: 'Mathématiques Complémentaires',
+  },
+  {
     patterns: [/\bprobabilit(?:y|ies|[ée]s)\s*(?:&|and|et)?\s*(?:stat(?:istics|s|istiques)?)?\b/i],
     en: 'Probability & Statistics',
     fr: 'Probabilités & Stats',
@@ -1830,7 +1944,7 @@ export const SUBJECT_CATALOG: readonly SubjectDefinition[] = [
     fr: 'Études Sociales',
   },
   {
-    patterns: [/\bcomputer\s+science\b/i, /\bcomput(?:ing|er)\b/i, /\binformatique\b/i, /\bcoding\b/i],
+    patterns: [/\b(?:computer\s+science|comput(?:ing|er)|ict|informatique|coding|tic)\b/i],
     en: 'Computing',
     fr: 'Informatique',
   },
@@ -1910,6 +2024,7 @@ export function cleanSubjectName(rawSubject: string, lang: 'en' | 'fr' = 'en'): 
       ''
     )
     .replace(/\s*(?:coursebook|learner's\s+book|student\s+book|textbook|workbook|livre|manuel|guide)$/i, '')
+    .replace(/\s*(?:first\s+language|second\s+language|foreign\s+language|langue\s+maternelle|langue\s+[ée]trang[èe]re)$/i, '')
     .trim();
 
   if (!stripped || /^books?$|^livres?$/i.test(stripped)) {
@@ -2895,71 +3010,6 @@ Vous avez des livres ? Répondez avec des photos pour aider les parents en atten
     return { success: true, ...payload };
   },
 
-  /** Seed 22 rich, realistic demo match records for live student presentations */
-  async seedDemoMatches() {
-    const now = Date.now();
-    let seeded = 0;
-
-    for (const d of DEMO_MATCH_DATA) {
-      const matchTimestamp = now - d.hoursAgo * 3600 * 1000;
-      const holdExpires = now + (48 - d.hoursAgo) * 3600 * 1000;
-      const isPrimary = /(?:Year\s*[1-5]|Primary)/i.test(d.concept) || /(?:Year\s*[1-5]|Primary)/i.test(d.title);
-      const isMiddle = /(?:Year\s*[6-9]|6eme|5eme|4eme|3eme|Middle)/i.test(d.concept) || /(?:Year\s*[6-9]|6eme|5eme|4eme|3eme|Checkpoint)/i.test(d.title);
-      const providerCat: (typeof PROVIDER_CATEGORIES)[number] = isPrimary ? 'PrimarySchool' : isMiddle ? 'MiddleSchool' : 'HighSchool';
-
-      // 1. Put Active Inventory Item in reserved status
-      await activeInventory.put({
-        itemId: `item_${d.id}`,
-        title: d.title,
-        domain: d.domain,
-        providerCategory: providerCat,
-        concept: d.concept,
-        conditionType: d.condition,
-        description: `Verified authentic school curriculum textbook. Available for school pickup.`,
-        sellerPhone: d.sellerPhone,
-        status: 'reserved',
-        preferredLang: d.lang,
-        reservedUntil: holdExpires,
-        reservedForPhone: d.buyerPhone,
-        matchedDemandId: `demand_${d.id}`,
-        handoverCode: d.code,
-        createdAt: matchTimestamp,
-      });
-
-      // 2. Put Demand Board item in matched status
-      await demandBoard.put({
-        demandId: `demand_${d.id}`,
-        userPhone: d.buyerPhone,
-        requestedQuery: d.query,
-        concept: d.concept,
-        domain: d.domain,
-        status: 'matched',
-        preferredLang: d.lang,
-        matchedItemId: `item_${d.id}`,
-        matchedAt: matchTimestamp,
-        handoverCode: d.code,
-        createdAt: matchTimestamp,
-      });
-
-      seeded++;
-    }
-
-    return { success: true, count: seeded };
-  },
-
-  /** Clear all demo match records to cleanly revert back to original state */
-  async clearDemoMatches() {
-    let removed = 0;
-    for (const d of DEMO_MATCH_DATA) {
-      try {
-        await activeInventory.delete({ itemId: `item_${d.id}` });
-        await demandBoard.delete({ demandId: `demand_${d.id}` });
-        removed++;
-      } catch {}
-    }
-    return { success: true, count: removed };
-  },
-
   /** Security & Observability System Status */
   async getSecurityObservabilityStatus() {
     const creds = await getWhatsAppCredentials();
@@ -2974,295 +3024,6 @@ Vous avez des livres ? Répondez avec des photos pour aider les parents en atten
     };
   },
 }));
-
-export const DEMO_MATCH_DATA = [
-  {
-    id: 'demo_match_01',
-    title: "Cambridge Primary Mathematics Learner's Book 3",
-    concept: 'Year3Mathematics',
-    domain: 'Mathematics' as const,
-    condition: 'LikeNew' as const,
-    sellerPhone: '+237677102938',
-    buyerPhone: '+237699482019',
-    code: '4821',
-    lang: 'en' as const,
-    hoursAgo: 2,
-    query: 'Year 3 Mathematics (Cambridge Primary)',
-  },
-  {
-    id: 'demo_match_02',
-    title: 'Cambridge Primary Science Stage 4 Coursebook',
-    concept: 'Year4Science',
-    domain: 'Science' as const,
-    condition: 'Good' as const,
-    sellerPhone: '+237675992011',
-    buyerPhone: '+237694883012',
-    code: '7193',
-    lang: 'en' as const,
-    hoursAgo: 4,
-    query: "Year 4 Science Learner's Book",
-  },
-  {
-    id: 'demo_match_03',
-    title: 'Cambridge Global English Stage 5 Activity Book',
-    concept: 'Year5English',
-    domain: 'Languages' as const,
-    condition: 'New' as const,
-    sellerPhone: '+237670112233',
-    buyerPhone: '+237690445566',
-    code: '1044',
-    lang: 'en' as const,
-    hoursAgo: 6,
-    query: 'Year 5 English Coursebook',
-  },
-  {
-    id: 'demo_match_04',
-    title: 'Mathématiques 6ème (Collection Diabolo - Hachette)',
-    concept: '6emeMathematiques',
-    domain: 'Mathematics' as const,
-    condition: 'LikeNew' as const,
-    sellerPhone: '+237691234567',
-    buyerPhone: '+237672345678',
-    code: '8392',
-    lang: 'fr' as const,
-    hoursAgo: 7,
-    query: 'Livre de Mathématiques 6ème',
-  },
-  {
-    id: 'demo_match_05',
-    title: 'Cambridge Checkpoint Science Coursebook 7 (Biology)',
-    concept: 'Year7Biology',
-    domain: 'Science' as const,
-    condition: 'Good' as const,
-    sellerPhone: '+237678129034',
-    buyerPhone: '+237697451029',
-    code: '3409',
-    lang: 'en' as const,
-    hoursAgo: 8,
-    query: 'Year 7 Biology textbook',
-  },
-  {
-    id: 'demo_match_06',
-    title: 'Cambridge Lower Secondary Complete Chemistry 8',
-    concept: 'Year8Chemistry',
-    domain: 'Science' as const,
-    condition: 'LikeNew' as const,
-    sellerPhone: '+237674001928',
-    buyerPhone: '+237693881029',
-    code: '9215',
-    lang: 'en' as const,
-    hoursAgo: 10,
-    query: 'Year 8 Chemistry (Cambridge Lower Secondary)',
-  },
-  {
-    id: 'demo_match_07',
-    title: 'Cambridge Lower Secondary Complete Physics 8',
-    concept: 'Year8Physics',
-    domain: 'Science' as const,
-    condition: 'Acceptable' as const,
-    sellerPhone: '+237679883344',
-    buyerPhone: '+237691772211',
-    code: '6048',
-    lang: 'en' as const,
-    hoursAgo: 12,
-    query: 'Year 8 Physics Coursebook',
-  },
-  {
-    id: 'demo_match_08',
-    title: 'Sciences de la Vie et de la Terre (SVT) 5ème (Bordas)',
-    concept: '5emeSVT',
-    domain: 'Science' as const,
-    condition: 'Good' as const,
-    sellerPhone: '+237692110099',
-    buyerPhone: '+237671334455',
-    code: '5182',
-    lang: 'fr' as const,
-    hoursAgo: 13,
-    query: 'Manuel SVT 5ème collège',
-  },
-  {
-    id: 'demo_match_09',
-    title: 'Computer Science for Cambridge Lower Secondary 9',
-    concept: 'Year9ComputerScience',
-    domain: 'Science' as const,
-    condition: 'New' as const,
-    sellerPhone: '+237676554433',
-    buyerPhone: '+237695221100',
-    code: '2741',
-    lang: 'en' as const,
-    hoursAgo: 15,
-    query: 'Year 9 Computer Science with Python',
-  },
-  {
-    id: 'demo_match_10',
-    title: 'Cambridge Lower Secondary History Coursebook 9',
-    concept: 'Year9History',
-    domain: 'Humanities' as const,
-    condition: 'Good' as const,
-    sellerPhone: '+237673998877',
-    buyerPhone: '+237692887766',
-    code: '4930',
-    lang: 'en' as const,
-    hoursAgo: 16,
-    query: 'Year 9 History & World Civilizations',
-  },
-  {
-    id: 'demo_match_11',
-    title: 'Cambridge IGCSE Mathematics Extended (0580) Coursebook',
-    concept: 'Year10Mathematics',
-    domain: 'Mathematics' as const,
-    condition: 'LikeNew' as const,
-    sellerPhone: '+237678443322',
-    buyerPhone: '+237697110022',
-    code: '8429',
-    lang: 'en' as const,
-    hoursAgo: 18,
-    query: 'Year 10 IGCSE Mathematics Extended (0580)',
-  },
-  {
-    id: 'demo_match_12',
-    title: 'Cambridge IGCSE Physics (0625) Coursebook with CD-ROM',
-    concept: 'Year10Physics',
-    domain: 'Science' as const,
-    condition: 'Good' as const,
-    sellerPhone: '+237674221199',
-    buyerPhone: '+237693554488',
-    code: '1397',
-    lang: 'en' as const,
-    hoursAgo: 20,
-    query: 'Year 10 IGCSE Physics Coursebook',
-  },
-  {
-    id: 'demo_match_13',
-    title: 'Physique-Chimie 3ème (Collection Microméga - Hatier)',
-    concept: '3emePhysiqueChimie',
-    domain: 'Science' as const,
-    condition: 'LikeNew' as const,
-    sellerPhone: '+237690332211',
-    buyerPhone: '+237679665544',
-    code: '7620',
-    lang: 'fr' as const,
-    hoursAgo: 21,
-    query: 'Livre Physique-Chimie 3ème Brevet',
-  },
-  {
-    id: 'demo_match_14',
-    title: 'Cambridge IGCSE and O Level Economics (0455) 2nd Edition',
-    concept: 'Year11Economics',
-    domain: 'Humanities' as const,
-    condition: 'Good' as const,
-    sellerPhone: '+237671887766',
-    buyerPhone: '+237690998877',
-    code: '3184',
-    lang: 'en' as const,
-    hoursAgo: 23,
-    query: 'Year 11 IGCSE Economics (0455)',
-  },
-  {
-    id: 'demo_match_15',
-    title: 'Cambridge IGCSE French as a Foreign Language Coursebook',
-    concept: 'Year11French',
-    domain: 'Languages' as const,
-    condition: 'New' as const,
-    sellerPhone: '+237675112244',
-    buyerPhone: '+237694334466',
-    code: '9502',
-    lang: 'en' as const,
-    hoursAgo: 24,
-    query: 'Year 11 French Foreign Language',
-  },
-  {
-    id: 'demo_match_16',
-    title: 'Cambridge IGCSE Geography (0460) Coursebook',
-    concept: 'Year11Geography',
-    domain: 'Humanities' as const,
-    condition: 'Acceptable' as const,
-    sellerPhone: '+237677665522',
-    buyerPhone: '+237696443311',
-    code: '4816',
-    lang: 'en' as const,
-    hoursAgo: 26,
-    query: 'Year 11 IGCSE Geography Coursebook',
-  },
-  {
-    id: 'demo_match_17',
-    title: 'Français 2nde (Textes et Méthodes - Nathan)',
-    concept: '2ndeFrancais',
-    domain: 'Languages' as const,
-    condition: 'LikeNew' as const,
-    sellerPhone: '+237691882233',
-    buyerPhone: '+237670771144',
-    code: '6301',
-    lang: 'fr' as const,
-    hoursAgo: 28,
-    query: 'Manuel Français 2nde Lycée',
-  },
-  {
-    id: 'demo_match_18',
-    title: 'Cambridge International AS & A Level Mathematics: Pure 1 (9709)',
-    concept: 'Year12Mathematics',
-    domain: 'Mathematics' as const,
-    condition: 'New' as const,
-    sellerPhone: '+237673119988',
-    buyerPhone: '+237692008877',
-    code: '5923',
-    lang: 'en' as const,
-    hoursAgo: 30,
-    query: 'Year 12 AS Level Pure Mathematics 1 (9709)',
-  },
-  {
-    id: 'demo_match_19',
-    title: 'Cambridge International AS & A Level Chemistry (9701 Coursebook)',
-    concept: 'Year12Chemistry',
-    domain: 'Science' as const,
-    condition: 'LikeNew' as const,
-    sellerPhone: '+237678556677',
-    buyerPhone: '+237697334455',
-    code: '2084',
-    lang: 'en' as const,
-    hoursAgo: 32,
-    query: 'Year 12 AS Level Chemistry Coursebook',
-  },
-  {
-    id: 'demo_match_20',
-    title: 'Mathématiques 1ère Spécialité (Collection Déclic - Hachette)',
-    concept: '1ereMathematiques',
-    domain: 'Mathematics' as const,
-    condition: 'Good' as const,
-    sellerPhone: '+237690441122',
-    buyerPhone: '+237679330011',
-    code: '7419',
-    lang: 'fr' as const,
-    hoursAgo: 34,
-    query: 'Livre Mathématiques 1ère Spécialité',
-  },
-  {
-    id: 'demo_match_21',
-    title: 'Cambridge International AS & A Level Physics (9702 Coursebook)',
-    concept: 'Year13Physics',
-    domain: 'Science' as const,
-    condition: 'Good' as const,
-    sellerPhone: '+237674889900',
-    buyerPhone: '+237693778899',
-    code: '8935',
-    lang: 'en' as const,
-    hoursAgo: 36,
-    query: 'Year 13 A Level Physics (9702 Coursebook)',
-  },
-  {
-    id: 'demo_match_22',
-    title: 'Philosophie Terminale (Manuel Hatier Spécialités & Tronc Commun)',
-    concept: 'TerminalePhilosophie',
-    domain: 'Humanities' as const,
-    condition: 'LikeNew' as const,
-    sellerPhone: '+237698112233',
-    buyerPhone: '+237677001122',
-    code: '1573',
-    lang: 'fr' as const,
-    hoursAgo: 38,
-    query: 'Manuel Philosophie Terminale Bac',
-  },
-];
 
 // ─── 6. RawRoute HTTP Endpoints for WhatsApp Webhooks ──────────────────────────
 

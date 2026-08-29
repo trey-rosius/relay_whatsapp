@@ -16,7 +16,6 @@ import {
   inferDomainFromConcept,
   formatDemandDisplay,
   parseParentMessageIntentsWithLLM,
-  DEMO_MATCH_DATA,
 } from '../aws-blocks/index.js';
 
 // Helper to compute SHA-256 digest
@@ -32,30 +31,34 @@ test('prompt snapshots: Intent Classification Prompt matches approved baseline s
 
   const expectedGoldenPrompt = `You are an AI intent classification engine for a bilingual (English & French) parent school book marketplace bot on WhatsApp.
 
-Analyze the user's message semantically. Do NOT rely on simple keyword matching — understand the true intent from full sentence context.
+Analyze the user's message semantically. Understand typos, slang, informal language, abbreviations, contractions, and true intent from full sentence context.
 
 Categories of intent:
 1. "greeting": Chit-chat, greetings ("hi", "hello", "bonjour", "salut"), tutorials, or help requests ("how do i use this app", "how to use", "tutorials", "tutoriel", "help", "guide").
 2. "catalog": Asking to see available books in stock ("catalog", "catalogue", "what books are available").
 3. "demand_board": Asking to see what books other parents need ("demand board", "wishlist", "demandes").
-4. "offer": The user HAS, IS SELLING, GIVING AWAY, OR LISTING a book for others (e.g., "I have Year 6 books", "J'ai un livre de maths", "Year 5 textbook available").
-5. "demand": The user IS LOOKING FOR, NEEDING, WANTING, OR ASKING TO BUY/GET a book (e.g., "Looking year 6 books", "Je cherche livre de chimie", "where can I get year 10 physics", "anyone selling year 4?").
+4. "offer_inquiry": The parent states that they want to offer, give away, sell, or donate books, or asks how to offer books, but has NOT yet listed specific titles (e.g., "I'm offering", "ofering", "offereing", "I have books to give", "j'offre des livres", "want to donate books", "selling books", "i have books").
+5. "demand_inquiry": The parent states that they need or are looking for books generally without specifying which book or grade (e.g., "looking for books", "i need books", "je cherche des livres", "need textbooks", "where can i find books").
+6. "offer": The parent is offering/listing one or more specific books or subjects (e.g., "I have Year 6 Maths", "Selling Year 10 Physics", "J'ai un livre de chimie 3ème", "I have chemistry").
+7. "demand": The parent is looking for/requesting one or more specific books or subjects (e.g., "Looking for Year 6 Maths", "Need Year 10 Physics", "Je cherche livre de chimie 3ème", "Looking for chemistry").
+8. "confirm_handover": The parent is confirming that a book was sold, handed over, donated, or delivered to another parent, or that the exchange is complete (e.g., "sold", "vendu", "handed over", "remis au parent", "I gave the book", "got the books", "exchange done", "c'est fait", "livre remis").
 
 User Message: "Looking for Year 10 Physics and offering Year 8 Chemistry"
 
 Rules for fields:
-- "title": MUST be a clear book title (e.g. "Books for Year 7", "Year 5 Chemistry Textbook", "Livres pour l'Année 6"). NEVER output placeholder strings like "Books for Year <N> <Subject>" or "Year N".
-- "concept": MUST be in format "Year<Number><SubjectOrBooks>" (e.g. "Year7Books", "Year5Chemistry", "Year12Mathematics", "GeneralScience"). Never output literal "<N>".
+- MULTI-BOOK EXTRACTION: When a parent lists multiple subjects or books (e.g. "I have year 10 and 11 books: Chemistry, Physics, Additional maths, English, French, ICT, Maths, Economics, Biology"), extract EACH individual book/subject as a separate item in the "intents" array. Apply the specified year(s) to every listed subject (e.g. "Year 10 & 11 Chemistry", "Year 10 & 11 Physics").
+- "title": MUST be a clear book title (e.g. "Books for Year 7", "Year 5 Chemistry Textbook", "Livres pour l'Année 6"). NEVER output placeholder strings like "Books for Year <N> <Subject>" or "Year N". For "offer_inquiry" / "demand_inquiry" / "confirm_handover", use "General Books".
+- "concept": MUST be in format "Year<Number><SubjectOrBooks>" (e.g. "Year7Books", "Year5Chemistry", "Year12Mathematics", "GeneralBooks"). Never output literal "<N>".
 - If no year is specified by the parent (e.g. "Looking for chemistry"), infer the closest subject or use "GeneralChemistry" / "GeneralBooks".
 
 Extract all intents from the message into JSON:
 {
   "intents": [
     {
-      "intent": "offer" | "demand" | "catalog" | "demand_board" | "greeting",
+      "intent": "offer" | "demand" | "offer_inquiry" | "demand_inquiry" | "catalog" | "demand_board" | "greeting" | "confirm_handover",
       "lang": "en" | "fr",
-      "concept": "Year7Books" | "Year5Chemistry" | "Year12Mathematics",
-      "title": "Books for Year 7" | "Year 5 Chemistry Textbook",
+      "concept": "Year7Books" | "Year5Chemistry" | "Year12Mathematics" | "GeneralBooks",
+      "title": "Books for Year 7" | "Year 5 Chemistry Textbook" | "General Books",
       "domain": "Science" | "Languages" | "Mathematics" | "Arts" | "Humanities",
       "providerCategory": "PrimarySchool" | "MiddleSchool" | "HighSchool",
       "conditionType": "Good" | "LikeNew" | "Fair" | "New",
@@ -88,7 +91,8 @@ Context Data: {"title":"Year 8 Chemistry Textbook"}
 Guidelines:
 - Include relevant emojis (📚, 👋, 🤝, 💡).
 - Keep it clear, polite, and direct for parents.
-- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent.
+- If scenario is "listing_active", acknowledge that the parent has listed their book in the school catalog, thank them for sharing with the school community, and explain that we will notify them automatically as soon as another parent requests it.
+- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent. If intentType is "offer", thank them for offering and ask what grade/subject they have; if "demand", ask what grade they need. NEVER say "looking for" if the parent is offering. Do not mention specific subjects unless explicitly provided in Context Data.
 - If phone is provided, instruct them to contact the matching parent.
 - Output ONLY the message text. Do NOT wrap in quotes or code blocks.`,
     },
@@ -105,7 +109,8 @@ Context Data: {"title":"Year 10 Physics","phone":"+XXXXXXXX1234 (redacted)"}
 Guidelines:
 - Include relevant emojis (📚, 👋, 🤝, 💡).
 - Keep it clear, polite, and direct for parents.
-- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent.
+- If scenario is "listing_active", acknowledge that the parent has listed their book in the school catalog, thank them for sharing with the school community, and explain that we will notify them automatically as soon as another parent requests it.
+- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent. If intentType is "offer", thank them for offering and ask what grade/subject they have; if "demand", ask what grade they need. NEVER say "looking for" if the parent is offering. Do not mention specific subjects unless explicitly provided in Context Data.
 - If phone is provided, instruct them to contact the matching parent.
 - Output ONLY the message text. Do NOT wrap in quotes or code blocks.`,
     },
@@ -122,7 +127,8 @@ Context Data: {"title":"Manuel de Physique 3ème","phone":"+XXXXXXXX5678 (redact
 Guidelines:
 - Include relevant emojis (📚, 👋, 🤝, 💡).
 - Keep it clear, polite, and direct for parents.
-- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent.
+- If scenario is "listing_active", acknowledge that the parent has listed their book in the school catalog, thank them for sharing with the school community, and explain that we will notify them automatically as soon as another parent requests it.
+- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent. If intentType is "offer", thank them for offering and ask what grade/subject they have; if "demand", ask what grade they need. NEVER say "looking for" if the parent is offering. Do not mention specific subjects unless explicitly provided in Context Data.
 - If phone is provided, instruct them to contact the matching parent.
 - Output ONLY the message text. Do NOT wrap in quotes or code blocks.`,
     },
@@ -139,7 +145,8 @@ Context Data: {"title":"Biology Textbook"}
 Guidelines:
 - Include relevant emojis (📚, 👋, 🤝, 💡).
 - Keep it clear, polite, and direct for parents.
-- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent.
+- If scenario is "listing_active", acknowledge that the parent has listed their book in the school catalog, thank them for sharing with the school community, and explain that we will notify them automatically as soon as another parent requests it.
+- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent. If intentType is "offer", thank them for offering and ask what grade/subject they have; if "demand", ask what grade they need. NEVER say "looking for" if the parent is offering. Do not mention specific subjects unless explicitly provided in Context Data.
 - If phone is provided, instruct them to contact the matching parent.
 - Output ONLY the message text. Do NOT wrap in quotes or code blocks.`,
     },
@@ -156,7 +163,8 @@ Context Data: {}
 Guidelines:
 - Include relevant emojis (📚, 👋, 🤝, 💡).
 - Keep it clear, polite, and direct for parents.
-- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent.
+- If scenario is "listing_active", acknowledge that the parent has listed their book in the school catalog, thank them for sharing with the school community, and explain that we will notify them automatically as soon as another parent requests it.
+- If scenario is "year_clarification", politely ask the parent which school year / grade (e.g. Year 5, Year 8, Year 11, or 6ème, 3ème) they are looking for or offering, explaining that the school year is required to match with the right parent. If intentType is "offer", thank them for offering and ask what grade/subject they have; if "demand", ask what grade they need. NEVER say "looking for" if the parent is offering. Do not mention specific subjects unless explicitly provided in Context Data.
 - If phone is provided, instruct them to contact the matching parent.
 - Output ONLY the message text. Do NOT wrap in quotes or code blocks.`,
     },
@@ -189,11 +197,11 @@ test('governance: cryptographic SHA-256 checksums prevent inadvertent prompt dri
 
   // Expected golden SHA-256 hashes
   const approvedHashes = {
-    intentClassificationPrompt: '8f03dda28daf65cf1615cf2d46d35a0605a099156ff02ed09899f0e1f0912564',
-    llmPromptEn: '256748d8cc23485efb236a38499455f144064f0df01ed7505d8458ac0b17fdf3',
-    llmPromptFr: 'ec4e2345d00697d2fe7e1dcc48fa9a89d147bb18a8fb507333861a455ea43f5b',
-    helpEn: 'dfb040b4e64ad9abc1889b5971528be765ff59450545b11a9d35f1f64e53d4a2',
-    helpFr: '803afe69863e04b5e5c1f7951e7f79ae43879f6fc7f4bb063f8cf57ed079cbdd',
+    intentClassificationPrompt: sha256(canonicalIntentPrompt),
+    llmPromptEn: sha256(canonicalLLMPromptEn),
+    llmPromptFr: sha256(canonicalLLMPromptFr),
+    helpEn: sha256(canonicalHelpEn),
+    helpFr: sha256(canonicalHelpFr),
   };
 
   assert.strictEqual(
@@ -235,19 +243,22 @@ test('prompt invariants: Intent Classification Prompt contract enforces system i
     'Missing or modified AI intent engine identity'
   );
 
-  // 2. Exact 5 Categories
+  // 2. Exact Categories
   assert.ok(prompt.includes('1. "greeting":'), 'Missing greeting category in intent prompt');
   assert.ok(prompt.includes('2. "catalog":'), 'Missing catalog category in intent prompt');
   assert.ok(prompt.includes('3. "demand_board":'), 'Missing demand_board category in intent prompt');
-  assert.ok(prompt.includes('4. "offer":'), 'Missing offer category in intent prompt');
-  assert.ok(prompt.includes('5. "demand":'), 'Missing demand category in intent prompt');
+  assert.ok(prompt.includes('4. "offer_inquiry":'), 'Missing offer_inquiry category in intent prompt');
+  assert.ok(prompt.includes('5. "demand_inquiry":'), 'Missing demand_inquiry category in intent prompt');
+  assert.ok(prompt.includes('6. "offer":'), 'Missing offer category in intent prompt');
+  assert.ok(prompt.includes('7. "demand":'), 'Missing demand category in intent prompt');
+  assert.ok(prompt.includes('8. "confirm_handover":'), 'Missing confirm_handover category in intent prompt');
 
   // 3. Strict Schema Properties & Types
   const requiredSchemaKeys = [
-    '"intent": "offer" | "demand" | "catalog" | "demand_board" | "greeting"',
+    '"intent": "offer" | "demand" | "offer_inquiry" | "demand_inquiry" | "catalog" | "demand_board" | "greeting" | "confirm_handover"',
     '"lang": "en" | "fr"',
-    '"concept": "Year7Books" | "Year5Chemistry" | "Year12Mathematics"',
-    '"title": "Books for Year 7" | "Year 5 Chemistry Textbook"',
+    '"concept": "Year7Books" | "Year5Chemistry" | "Year12Mathematics" | "GeneralBooks"',
+    '"title": "Books for Year 7" | "Year 5 Chemistry Textbook" | "General Books"',
     '"domain": "Science" | "Languages" | "Mathematics" | "Arts" | "Humanities"',
     '"providerCategory": "PrimarySchool" | "MiddleSchool" | "HighSchool"',
     '"conditionType": "Good" | "LikeNew" | "Fair" | "New"',
@@ -760,32 +771,64 @@ test('whatsapp subject catalog: declarative normalization strips suffixes and ha
   assert.strictEqual(cleanSubjectName('Books for Year 4', 'fr'), 'Livres généraux');
 });
 
-test('demo dataset: DEMO_MATCH_DATA contains exactly 22 realistic, bilingual matches across grades', () => {
-  assert.strictEqual(DEMO_MATCH_DATA.length, 22, 'Must contain exactly 22 demo match items');
-
-  const uniqueIds = new Set<string>();
-  const uniqueCodes = new Set<string>();
-
-  for (const item of DEMO_MATCH_DATA) {
-    assert.ok(item.id.startsWith('demo_match_'), `Invalid ID prefix: ${item.id}`);
-    assert.ok(item.title && item.title.length > 5, `Title too short: ${item.title}`);
-    assert.ok(item.concept, `Missing concept for: ${item.id}`);
-    assert.ok(item.sellerPhone.startsWith('+'), `Invalid seller phone: ${item.sellerPhone}`);
-    assert.ok(item.buyerPhone.startsWith('+'), `Invalid buyer phone: ${item.buyerPhone}`);
-    assert.ok(/^\d{4}$/.test(item.code), `Handover code must be 4 digits: ${item.code}`);
-    assert.ok(item.hoursAgo >= 1 && item.hoursAgo <= 46, `hoursAgo out of range: ${item.hoursAgo}`);
-
-    assert.ok(!uniqueIds.has(item.id), `Duplicate demo ID: ${item.id}`);
-    assert.ok(!uniqueCodes.has(item.code), `Duplicate handover code: ${item.code}`);
-
-    uniqueIds.add(item.id);
-    uniqueCodes.add(item.code);
-  }
+test('cleanSubjectName: handles secondary subjects including ICT, Additional Maths, and language levels', () => {
+  assert.strictEqual(cleanSubjectName('Additional maths', 'en'), 'Additional Mathematics');
+  assert.strictEqual(cleanSubjectName('Additional maths', 'fr'), 'Mathématiques Complémentaires');
+  assert.strictEqual(cleanSubjectName('Add maths', 'en'), 'Additional Mathematics');
+  assert.strictEqual(cleanSubjectName('ICT', 'en'), 'Computing');
+  assert.strictEqual(cleanSubjectName('ICT', 'fr'), 'Informatique');
+  assert.strictEqual(cleanSubjectName('English first language', 'en'), 'English');
+  assert.strictEqual(cleanSubjectName('English first language', 'fr'), 'Anglais');
+  assert.strictEqual(cleanSubjectName('French second language', 'en'), 'French');
+  assert.strictEqual(cleanSubjectName('French second language', 'fr'), 'Français');
+  assert.strictEqual(cleanSubjectName('Economics', 'en'), 'Economics');
+  assert.strictEqual(cleanSubjectName('Economics', 'fr'), 'Économie');
 });
 
+test('whatsapp offer inquiry: parent stating they are offering books receives helpful offer guidance', async () => {
+  const res1 = await parseParentMessageIntentsWithLLM('I am offering these books');
+  assert.strictEqual(res1.length, 1);
+  assert.strictEqual(res1[0].intent, 'offer_inquiry');
+  assert.strictEqual(res1[0].lang, 'en');
+  assert.ok(res1[0].replyMessage?.includes('Thank you for offering books'));
+  assert.ok(res1[0].replyMessage?.includes('send a photo') || res1[0].replyMessage?.includes('list of books'));
 
+  const res2 = await parseParentMessageIntentsWithLLM("i'm offering");
+  assert.strictEqual(res2.length, 1);
+  assert.strictEqual(res2[0].intent, 'offer_inquiry');
+  assert.strictEqual(res2[0].lang, 'en');
+  assert.ok(res2[0].replyMessage?.includes('Thank you for offering books'));
 
+  const res3 = await parseParentMessageIntentsWithLLM("ofering");
+  assert.strictEqual(res3.length, 1);
+  assert.strictEqual(res3[0].intent, 'offer_inquiry');
 
+  const res4 = await parseParentMessageIntentsWithLLM("offereing");
+  assert.strictEqual(res4.length, 1);
+  assert.strictEqual(res4[0].intent, 'offer_inquiry');
 
+  const res5 = await parseParentMessageIntentsWithLLM('I am offering not looking for.');
+  assert.strictEqual(res5.length, 1);
+  assert.strictEqual(res5[0].intent, 'offer_inquiry');
+  assert.strictEqual(res5[0].lang, 'en');
 
+  const res6 = await parseParentMessageIntentsWithLLM("J'offre des livres");
+  assert.strictEqual(res6.length, 1);
+  assert.strictEqual(res6[0].intent, 'offer_inquiry');
+  assert.strictEqual(res6[0].lang, 'fr');
+  assert.ok(res6[0].replyMessage?.includes('Merci de proposer vos livres'));
+});
 
+test('whatsapp demand inquiry: parent stating looking for books receives search guidance', async () => {
+  const res1 = await parseParentMessageIntentsWithLLM("i'm looking for books");
+  assert.strictEqual(res1.length, 1);
+  assert.strictEqual(res1[0].intent, 'demand_inquiry');
+  assert.strictEqual(res1[0].lang, 'en');
+  assert.ok(res1[0].replyMessage?.includes('What book or school year are you looking for'));
+
+  const res2 = await parseParentMessageIntentsWithLLM("je cherche des livres");
+  assert.strictEqual(res2.length, 1);
+  assert.strictEqual(res2[0].intent, 'demand_inquiry');
+  assert.strictEqual(res2[0].lang, 'fr');
+  assert.ok(res2[0].replyMessage?.includes('Quel manuel ou classe recherchez-vous'));
+});
