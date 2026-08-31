@@ -838,30 +838,50 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         });
       });
 
+      // Filter out greeting if there are other actionable intents in a compound message
+      const nonGreetingIntents = extractedIntents.filter(
+        (i) => i.intent !== 'greeting' && i.intent !== 'spam'
+      );
+      const activeIntents = nonGreetingIntents.length > 0 ? nonGreetingIntents : extractedIntents;
+
+      // Automatically promote grade-specific inquiry intents to full demand/offer intents
+      for (const item of activeIntents) {
+        if (item.intent === 'demand_inquiry' && hasExplicitSchoolYear(item.concept, payload.message_text || '')) {
+          item.intent = 'demand';
+        } else if (item.intent === 'offer_inquiry' && hasExplicitSchoolYear(item.concept, payload.message_text || '')) {
+          item.intent = 'offer';
+        }
+      }
+
       if (
-        extractedIntents[0]?.intent === 'greeting' ||
-        extractedIntents[0]?.intent === 'spam' ||
-        extractedIntents[0]?.intent === 'offer_inquiry' ||
-        extractedIntents[0]?.intent === 'demand_inquiry'
+        activeIntents.length === 1 &&
+        (activeIntents[0]?.intent === 'greeting' ||
+          activeIntents[0]?.intent === 'spam' ||
+          activeIntents[0]?.intent === 'offer_inquiry' ||
+          activeIntents[0]?.intent === 'demand_inquiry')
       ) {
-        const lang = extractedIntents[0].lang || 'en';
+        const lang = activeIntents[0].lang || 'en';
         const replyMsg =
-          extractedIntents[0].replyMessage || (await generateLLMMessage('greeting', { lang }));
+          activeIntents[0].replyMessage || (await generateLLMMessage('greeting', { lang }));
         await sendWhatsAppTextMessage(payload.from_phone, replyMsg);
 
         const duration = Date.now() - startTime;
         metrics.emit('WorkflowCompletionTime', duration, {
           unit: 'Milliseconds',
-          dimensions: { outcome: extractedIntents[0].intent },
+          dimensions: { outcome: activeIntents[0].intent },
         });
 
         return {
-          status: (extractedIntents[0].intent === 'offer_inquiry' || extractedIntents[0].intent === 'demand_inquiry' ? 'processed' : extractedIntents[0].intent) as any,
+          status: (activeIntents[0].intent === 'offer_inquiry' || activeIntents[0].intent === 'demand_inquiry'
+            ? 'processed'
+            : activeIntents[0].intent) as any,
           replyMessage: replyMsg,
           extractedIntentsCount: 1,
           vectorChunksCount: 0,
         };
       }
+
+      const intentsToIterate = activeIntents;
 
       // Conversational Year Validation: If parent offers or seeks a book with NO school year specified
       const firstOfferOrDemand = extractedIntents.find((i): i is ExtractedIntentItem & { intent: 'offer' | 'demand' } => i.intent === 'offer' || i.intent === 'demand');
@@ -902,8 +922,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
       const newlyAddedBooks: { id: string; title: string }[] = [];
 
       // Step 3 & 4: Iterate over each extracted item in the message
-      for (let idx = 0; idx < extractedIntents.length; idx++) {
-        const item = extractedIntents[idx];
+      for (let idx = 0; idx < intentsToIterate.length; idx++) {
+        const item = intentsToIterate[idx];
 
         if (item.intent === 'confirm_handover') {
           // Process Handover & Sale Confirmation ("Sold", "Vendu", "Remis", "Got it")
