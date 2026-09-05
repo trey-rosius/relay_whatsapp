@@ -108,6 +108,8 @@ let filterDomain: string = 'all';
 let filterClass: string = 'all';
 let filterCondition: string = 'all';
 let filterSeller: string = 'all';
+let filterStatus: 'all' | 'active' | 'reserved' | 'sold' = 'all';
+let matchSubTab: 'holds' | 'completed' = 'holds';
 let datePreset: DatePreset = 'all';
 let customDateFrom: string = '';
 let customDateTo: string = '';
@@ -300,6 +302,11 @@ function filterInventoryItems(items: ActiveInventoryItem[]): ActiveInventoryItem
         return false;
       }
 
+      // Status filter (Active / Reserved / Sold)
+      if (filterStatus !== 'all' && item.status !== filterStatus) {
+        return false;
+      }
+
       // Date filter
       if (!passesDateFilter(item.createdAt)) {
         return false;
@@ -314,7 +321,7 @@ function filterInventoryItems(items: ActiveInventoryItem[]): ActiveInventoryItem
     });
 }
 
-function filterDemandItems(items: DemandItem[], status: 'pending' | 'matched'): DemandItem[] {
+function filterDemandItems(items: DemandItem[], status: 'pending' | 'matched' | 'fulfilled'): DemandItem[] {
   return items
     .filter(item => {
       if (item.status !== status) return false;
@@ -326,7 +333,8 @@ function filterDemandItems(items: DemandItem[], status: 'pending' | 'matched'): 
           (item.requestedQuery && item.requestedQuery.toLowerCase().includes(q)) ||
           (item.concept && item.concept.toLowerCase().includes(q)) ||
           (item.domain && item.domain.toLowerCase().includes(q)) ||
-          (item.userPhone && item.userPhone.toLowerCase().includes(q));
+          (item.userPhone && item.userPhone.toLowerCase().includes(q)) ||
+          (item.handoverCode && item.handoverCode.toLowerCase().includes(q));
         if (!matchesSearch) return false;
       }
 
@@ -343,8 +351,8 @@ function filterDemandItems(items: DemandItem[], status: 'pending' | 'matched'): 
       return true;
     })
     .sort((a, b) => {
-      const timeA = a.createdAt || 0;
-      const timeB = b.createdAt || 0;
+      const timeA = a.matchedAt || a.createdAt || 0;
+      const timeB = b.matchedAt || b.createdAt || 0;
       return sortDescending ? timeB - timeA : timeA - timeB;
     });
 }
@@ -356,6 +364,7 @@ function countActiveFilters(): number {
   if (filterClass !== 'all') count++;
   if (filterCondition !== 'all') count++;
   if (filterSeller !== 'all') count++;
+  if (filterStatus !== 'all') count++;
   if (datePreset !== 'all') count++;
   return count;
 }
@@ -366,6 +375,7 @@ function resetAllFilters() {
   filterClass = 'all';
   filterCondition = 'all';
   filterSeller = 'all';
+  filterStatus = 'all';
   datePreset = 'all';
   customDateFrom = '';
   customDateTo = '';
@@ -543,15 +553,16 @@ async function handleTestHmacValidation() {
 function renderStatsOverview() {
   const pendingCount = demands.filter(d => d.status === 'pending').length;
   const matchedCount = demands.filter(d => d.status === 'matched').length;
-  const availableCount = inventory.length;
+  const soldCount = demands.filter(d => d.status === 'fulfilled').length || inventory.filter(i => i.status === 'sold').length;
+  const activeCount = inventory.filter(i => i.status === 'active').length;
   const eventsCount = events.length;
 
   return html`
     <div class="stats-row">
-      <div class="stat-card" style="cursor:pointer;" @click=${() => { activeTab = 'available'; redraw(); }}>
+      <div class="stat-card" style="cursor:pointer;" @click=${() => { activeTab = 'available'; filterStatus = 'active'; redraw(); }}>
         <div class="stat-icon" style="background:rgba(59,130,246,0.15);color:#60a5fa;">📚</div>
         <div class="stat-info">
-          <div class="stat-value">${availableCount}</div>
+          <div class="stat-value">${activeCount}</div>
           <div class="stat-label">Available Books</div>
         </div>
       </div>
@@ -564,11 +575,19 @@ function renderStatsOverview() {
         </div>
       </div>
 
-      <div class="stat-card" style="cursor:pointer;" @click=${() => { activeTab = 'matches'; redraw(); }}>
-        <div class="stat-icon" style="background:rgba(16,185,129,0.15);color:#34d399;">🤝</div>
+      <div class="stat-card" style="cursor:pointer;" @click=${() => { activeTab = 'matches'; matchSubTab = 'holds'; redraw(); }}>
+        <div class="stat-icon" style="background:rgba(99,102,241,0.15);color:#818cf8;">🤝</div>
         <div class="stat-info">
           <div class="stat-value">${matchedCount}</div>
-          <div class="stat-label">Matched Demands</div>
+          <div class="stat-label">48H Active Holds</div>
+        </div>
+      </div>
+
+      <div class="stat-card" style="cursor:pointer;" @click=${() => { activeTab = 'matches'; matchSubTab = 'completed'; redraw(); }}>
+        <div class="stat-icon" style="background:rgba(16,185,129,0.15);color:#34d399;">🎓</div>
+        <div class="stat-info">
+          <div class="stat-value">${soldCount}</div>
+          <div class="stat-label">Sold & Completed</div>
         </div>
       </div>
 
@@ -586,7 +605,8 @@ function renderStatsOverview() {
 function renderTabsNavigation() {
   const pendingCount = demands.filter(d => d.status === 'pending').length;
   const matchedCount = demands.filter(d => d.status === 'matched').length;
-  const availableCount = inventory.length;
+  const completedCount = demands.filter(d => d.status === 'fulfilled').length || inventory.filter(i => i.status === 'sold').length;
+  const activeCount = inventory.filter(i => i.status === 'active').length;
 
   return html`
     <div class="tabs-nav">
@@ -595,7 +615,7 @@ function renderTabsNavigation() {
         @click=${() => { activeTab = 'available'; redraw(); }}
       >
         <span>📚 Available Books</span>
-        <span class="tab-count">${availableCount}</span>
+        <span class="tab-count">${activeCount}</span>
       </button>
 
       <button
@@ -610,8 +630,8 @@ function renderTabsNavigation() {
         class="tab-btn ${activeTab === 'matches' ? 'active' : ''}"
         @click=${() => { activeTab = 'matches'; redraw(); }}
       >
-        <span>🤝 Matched Pairs</span>
-        <span class="tab-count">${matchedCount}</span>
+        <span>🤝 Matches & Sales</span>
+        <span class="tab-count">${matchedCount + completedCount}</span>
       </button>
 
       <button
@@ -732,6 +752,18 @@ function renderFilterToolbar(showClassFilter = true) {
                 <option value="LikeNew">Like New</option>
                 <option value="Good">Good</option>
                 <option value="Acceptable">Acceptable</option>
+              </select>
+
+              <!-- Status Selector (Active / Reserved / Sold) -->
+              <select
+                class="filter-select"
+                .value=${filterStatus}
+                @change=${(e: any) => { filterStatus = e.target.value; redraw(); }}
+              >
+                <option value="all">📦 All Statuses (${inventory.length})</option>
+                <option value="active">🟢 Available (${inventory.filter(i => i.status === 'active').length})</option>
+                <option value="reserved">⏳ On Hold (${inventory.filter(i => i.status === 'reserved').length})</option>
+                <option value="sold">🎓 Sold & Completed (${inventory.filter(i => i.status === 'sold').length})</option>
               </select>
             `
           : ''}
@@ -864,9 +896,13 @@ function renderAvailableBooksTab() {
     <div class="card">
       <div class="card-header">
         <div>
-          <h3>📚 Available Books Catalog</h3>
+          <h3>📚 ${filterStatus === 'sold' ? 'Sold & Completed Books Archive' : filterStatus === 'reserved' ? 'On-Hold Inventory' : 'Available Books Catalog'}</h3>
           <p style="margin:4px 0 0 0;font-size:0.9rem;color:var(--text-muted);">
-            Active inventory extracted from WhatsApp parent messages, categorized by class and subject (Sorted newest first).
+            ${filterStatus === 'sold'
+              ? 'Archived record of sold books, verified handovers, and buyer details.'
+              : filterStatus === 'reserved'
+              ? 'Books currently on 48-hour hold awaiting physical exchange.'
+              : 'Active inventory extracted from WhatsApp parent messages, categorized by class and subject (Sorted newest first).'}
           </p>
         </div>
         <div style="display:flex;gap:10px;align-items:center;">
@@ -935,16 +971,29 @@ function renderAvailableBooksTab() {
 }
 
 function renderBookCard(item: ActiveInventoryItem) {
+  const isSold = item.status === 'sold';
+  const isReserved = item.status === 'reserved';
+
   return html`
-    <div class="item-card">
+    <div
+      class="item-card"
+      style="${isSold ? 'border-left: 3px solid var(--success);' : isReserved ? 'border-left: 3px solid #6366f1;' : ''}"
+    >
       <div class="item-card-header">
         <div class="item-title-wrap">
           <div class="book-title">${item.title}</div>
           <div class="book-concept">${item.concept}</div>
         </div>
-        <span class="badge ${getDomainBadgeClass(item.domain)}">
-          ${item.domain}
-        </span>
+        <div style="display:flex;gap:6px;align-items:center;">
+          ${isSold
+            ? html`<span class="badge" style="background:rgba(16,185,129,0.15);color:#34d399;border:1px solid rgba(16,185,129,0.35);">SOLD 🎓</span>`
+            : isReserved
+            ? html`<span class="badge" style="background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.35);">HOLD ⏳</span>`
+            : ''}
+          <span class="badge ${getDomainBadgeClass(item.domain)}">
+            ${item.domain}
+          </span>
+        </div>
       </div>
 
       <div class="tags-row">
@@ -953,10 +1002,26 @@ function renderBookCard(item: ActiveInventoryItem) {
         </span>
         <!-- Feature 3D: Verified Condition Badge -->
         ${renderConditionBadge(item.conditionType)}
+        ${item.handoverCode ? html`<span class="badge" style="background:rgba(16,185,129,0.12);color:#34d399;border:1px solid rgba(16,185,129,0.25);">Code: #${item.handoverCode}</span>` : ''}
       </div>
 
       ${item.description
         ? html`<div style="font-size:0.84rem;color:var(--text-muted);line-height:1.4;">${item.description}</div>`
+        : ''}
+
+      ${isSold
+        ? html`
+            <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);padding:8px 10px;border-radius:8px;font-size:0.8rem;color:#6ee7b7;display:flex;flex-direction:column;gap:3px;">
+              <div>🎓 <strong>Handover Completed</strong> ${item.soldToPhone ? html`to <strong style="color:var(--text);">${item.soldToPhone}</strong>` : ''}</div>
+              ${item.soldAt ? html`<div style="font-size:0.75rem;color:var(--text-dim);">Sold on ${formatExactDate(item.soldAt)}</div>` : ''}
+            </div>
+          `
+        : isReserved
+        ? html`
+            <div style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);padding:8px 10px;border-radius:8px;font-size:0.8rem;color:#a5b4fc;">
+              ⏳ <strong>Reserved on 48h Hold</strong> ${item.reservedForPhone ? html`for <strong style="color:var(--text);">${item.reservedForPhone}</strong>` : ''}
+            </div>
+          `
         : ''}
 
       <div class="card-footer">
@@ -1330,29 +1395,56 @@ function renderPendingDemandsTab() {
 // ─── Tab View: Matched Demands ────────────────────────────────────────────────
 
 function renderMatchedDemandsTab() {
-  const matches = filterDemandItems(demands, 'matched');
+  const activeHolds = filterDemandItems(demands, 'matched');
+  const completedDemands = filterDemandItems(demands, 'fulfilled');
+  const isCompletedView = matchSubTab === 'completed';
+  const itemsToRender = isCompletedView ? completedDemands : activeHolds;
 
   return html`
     <div class="card">
       <div class="card-header">
         <div>
-          <h3>🤝 Matched Pairs & 48-Hour Reservations</h3>
+          <h3>${isCompletedView ? '🎓 Completed Book Exchanges & Sold Archive' : '🤝 Matched Pairs & 48-Hour Reservations'}</h3>
           <p style="margin:4px 0 0 0;font-size:0.9rem;color:var(--text-muted);">
-            Demands matched with available books. Holds automatically release after 48 hours if handover is not confirmed.
+            ${isCompletedView
+              ? 'Verified physical handovers. Each record preserves the buyer, seller, handover verification code, and completion date.'
+              : 'Demands matched with available books. Holds automatically release after 48 hours if handover is not confirmed.'}
           </p>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button
-            class="secondary sm"
-            title="Proactively sweep and release all expired 48H holds"
-            @click=${async () => {
-              const res = await api.releaseExpiredHolds();
-              setBannerMessage(`🧹 Swept holds: ${res.releasedCount} expired hold(s) released back to active inventory.`);
-              await loadData();
-            }}
-          >
-            🧹 Sweep Holds
-          </button>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <!-- View Toggle: Active Holds vs Completed / Sold -->
+          <div style="display:flex;background:rgba(0,0,0,0.4);border:1px solid var(--surface-border);border-radius:8px;padding:3px;">
+            <button
+              class="sm ${matchSubTab === 'holds' ? '' : 'secondary'}"
+              style="border-radius:6px;box-shadow:none;"
+              @click=${() => { matchSubTab = 'holds'; redraw(); }}
+            >
+              ⏳ Active Holds (${demands.filter(d => d.status === 'matched').length})
+            </button>
+            <button
+              class="sm ${matchSubTab === 'completed' ? '' : 'secondary'}"
+              style="border-radius:6px;box-shadow:none;"
+              @click=${() => { matchSubTab = 'completed'; redraw(); }}
+            >
+              🎓 Completed & Sold (${demands.filter(d => d.status === 'fulfilled').length})
+            </button>
+          </div>
+
+          ${!isCompletedView
+            ? html`
+                <button
+                  class="secondary sm"
+                  title="Proactively sweep and release all expired 48H holds"
+                  @click=${async () => {
+                    const res = await api.releaseExpiredHolds();
+                    setBannerMessage(`🧹 Swept holds: ${res.releasedCount} expired hold(s) released back to active inventory.`);
+                    await loadData();
+                  }}
+                >
+                  🧹 Sweep Holds
+                </button>
+              `
+            : ''}
           <button class="secondary sm" @click=${loadData}>
             ${isLoading ? '⏳ Refreshing...' : '🔄 Refresh'}
           </button>
@@ -1361,35 +1453,44 @@ function renderMatchedDemandsTab() {
 
       ${renderFilterToolbar(false)}
 
-      ${matches.length === 0
+      ${itemsToRender.length === 0
         ? html`
             <div class="empty-state">
-              <div class="empty-state-icon">🤝</div>
-              <div class="empty-state-title">No active matched pairs found</div>
+              <div class="empty-state-icon">${isCompletedView ? '🎓' : '🤝'}</div>
+              <div class="empty-state-title">
+                ${isCompletedView ? 'No completed book exchanges found' : 'No active matched pairs found'}
+              </div>
               <div class="empty-state-text">
-                When a seller lists a book that matches a waiting parent's wishlist, it will be placed on a 48-hour hold and displayed here.
+                ${isCompletedView
+                  ? 'When parents complete a physical book exchange and confirm via WhatsApp or the Mark Sold action, it will appear here.'
+                  : 'When a seller lists a book that matches a waiting parent\'s wishlist, it will be placed on a 48-hour hold and displayed here.'}
               </div>
-              <div style="margin-top:12px;display:flex;gap:10px;">
-                <button
-                  class="secondary sm"
-                  @click=${async () => {
-                    await handleAddWishlistDemand('Year8Science', 'Year 8 Science', 'Science', '+15559990001');
-                    await handleSimulateInboundMedia('I have Year 8 Science textbook in great shape', '+15559990002');
-                  }}
-                >
-                  ⚡ Run Auto-Match Simulation
-                </button>
-              </div>
+              ${!isCompletedView
+                ? html`
+                    <div style="margin-top:12px;display:flex;gap:10px;">
+                      <button
+                        class="secondary sm"
+                        @click=${async () => {
+                          await handleAddWishlistDemand('Year8Science', 'Year 8 Science', 'Science', '+15559990001');
+                          await handleSimulateInboundMedia('I have Year 8 Science textbook in great shape', '+15559990002');
+                        }}
+                      >
+                        ⚡ Run Auto-Match Simulation
+                      </button>
+                    </div>
+                  `
+                : ''}
             </div>
           `
         : html`
             <div class="items-grid">
-              ${matches.map(m => {
+              ${itemsToRender.map(m => {
                 const matchTime = m.matchedAt || m.createdAt || Date.now();
                 const holdDurationMs = 48 * 60 * 60 * 1000;
                 const remainingMs = matchTime + holdDurationMs - Date.now();
                 const isExpired = m.status !== 'fulfilled' && remainingMs <= 0;
                 const remainingHours = Math.max(1, Math.ceil(remainingMs / (1000 * 60 * 60)));
+                const matchedBook = inventory.find(i => i.itemId === m.matchedItemId);
 
                 return html`
                   <div
@@ -1402,7 +1503,7 @@ function renderMatchedDemandsTab() {
                         <div class="book-concept">Concept: ${m.concept}</div>
                       </div>
                       ${m.status === 'fulfilled'
-                        ? html`<span class="badge" style="background:rgba(16,185,129,0.15);color:#34d399;border:1px solid rgba(16,185,129,0.35);">COMPLETED / SOLD</span>`
+                        ? html`<span class="badge" style="background:rgba(16,185,129,0.15);color:#34d399;border:1px solid rgba(16,185,129,0.35);">COMPLETED / SOLD 🎓</span>`
                         : isExpired
                         ? html`<span class="badge" style="background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.35);">HOLD EXPIRED</span>`
                         : html`<span class="badge badge-matched">48H HOLD (${remainingHours}h left)</span>`}
@@ -1425,7 +1526,14 @@ function renderMatchedDemandsTab() {
                         : 'rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);color:#a5b4fc;'};padding:10px 12px;border-radius:8px;font-size:0.83rem;"
                     >
                       ${m.status === 'fulfilled'
-                        ? 'Handover completed! Book marked as sold and removed from active catalog.'
+                        ? html`
+                            <div>✅ <strong>Handover verified & completed!</strong> Book marked as sold and removed from active catalog.</div>
+                            <div style="margin-top:6px;display:flex;flex-direction:column;gap:3px;font-size:0.8rem;color:var(--text-muted);">
+                              ${matchedBook?.sellerPhone ? html`<div>Seller: <strong style="color:var(--text);">${matchedBook.sellerPhone}</strong> ${matchedBook.title ? `(${matchedBook.title})` : ''}</div>` : ''}
+                              <div>Buyer: <strong style="color:var(--text);">${m.userPhone}</strong></div>
+                              ${(matchedBook?.soldAt || m.matchedAt) ? html`<div>Completed: <strong>${formatExactDate(matchedBook?.soldAt || m.matchedAt!)}</strong></div>` : ''}
+                            </div>
+                          `
                         : isExpired
                         ? '⚠️ 48-Hour hold has elapsed without physical exchange. Book can be returned to community circulation.'
                         : `⏳ 48-Hour Reservation Active (${remainingHours}h remaining). Matched parents introduced via WhatsApp.`}
@@ -1434,7 +1542,7 @@ function renderMatchedDemandsTab() {
                     <div class="card-footer">
                       <div style="display:flex;flex-direction:column;gap:2px;">
                         <div style="font-size:0.75rem;color:var(--text-dim);">
-                          Recipient Parent: <strong style="color:var(--text);">${m.userPhone}</strong>
+                          ${m.status === 'fulfilled' ? 'Buyer Phone:' : 'Recipient Parent:'} <strong style="color:var(--text);">${m.userPhone}</strong>
                         </div>
                         <div class="date-badge" title="${formatExactDate(m.createdAt)}">
                           ${formatRelativeTime(m.createdAt)} (${formatExactDate(m.createdAt)})
