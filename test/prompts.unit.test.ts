@@ -921,3 +921,56 @@ test('contact inquiry regex: accurately detects questions asking for matched par
   assert.ok(!contactPattern.test('catalog'));
   assert.ok(!contactPattern.test('help'));
 });
+
+test('phone unmasking guarantee: phone numbers are NEVER redacted across any scenario, language, or international format', async () => {
+  const samplePhones = [
+    { raw: '+237651034448', clean: '237651034448' },
+    { raw: '237651034448', clean: '237651034448' },
+    { raw: '+33612345678', clean: '33612345678' },
+    { raw: '+447911123456', clean: '447911123456' },
+    { raw: '+14155552671', clean: '14155552671' },
+    { raw: '+237 6 70 00 11 22', clean: '237670001122' },
+  ];
+
+  for (const phoneItem of samplePhones) {
+    for (const lang of ['en', 'fr'] as const) {
+      // 1. Buyer match notification
+      const buyerMsg = buildBuyerMatchMessage('Year 3 English', phoneItem.raw, '5521', lang);
+      assert.ok(!buyerMsg.includes('[PHONE_REDACTED]'), `Buyer (${lang}) must not contain [PHONE_REDACTED] for ${phoneItem.raw}`);
+      assert.ok(!buyerMsg.toLowerCase().includes('redacted'), `Buyer (${lang}) must not contain "redacted" for ${phoneItem.raw}`);
+      assert.ok(!buyerMsg.includes('[Your Bot Name]'), `Buyer (${lang}) must not contain placeholder bot name`);
+      assert.ok(!buyerMsg.includes('If you have the phone number'), `Buyer (${lang}) must not contain missing-phone disclaimer`);
+      assert.ok(buyerMsg.includes(`https://wa.me/${phoneItem.clean}`), `Buyer (${lang}) must contain wa.me/${phoneItem.clean}`);
+      assert.ok(buyerMsg.includes('#5521'), `Buyer (${lang}) must contain verification code`);
+
+      // 2. Seller match notification
+      const sellerMsg = buildSellerMatchMessage('Year 3 English', phoneItem.raw, '5521', lang);
+      assert.ok(!sellerMsg.includes('[PHONE_REDACTED]'), `Seller (${lang}) must not contain [PHONE_REDACTED] for ${phoneItem.raw}`);
+      assert.ok(!sellerMsg.toLowerCase().includes('redacted'), `Seller (${lang}) must not contain "redacted" for ${phoneItem.raw}`);
+      assert.ok(!sellerMsg.includes('[Your Bot Name]'), `Seller (${lang}) must not contain placeholder bot name`);
+      assert.ok(sellerMsg.includes(`https://wa.me/${phoneItem.clean}`), `Seller (${lang}) must contain wa.me/${phoneItem.clean}`);
+      assert.ok(sellerMsg.includes('#5521'), `Seller (${lang}) must contain verification code`);
+
+      // 3. Runtime generateLLMMessage pipeline
+      const runtimeBuyer = await generateLLMMessage('match_buyer', {
+        title: 'Year 3 English',
+        phone: phoneItem.raw,
+        handoverCode: '5521',
+        lang,
+      });
+      assert.ok(!runtimeBuyer.includes('[PHONE_REDACTED]'), `Runtime buyer (${lang}) must not redact phone`);
+      assert.ok(!runtimeBuyer.toLowerCase().includes('redacted'), `Runtime buyer (${lang}) must not redact phone`);
+      assert.ok(runtimeBuyer.includes(`https://wa.me/${phoneItem.clean}`), `Runtime buyer (${lang}) must contain direct link`);
+
+      const runtimeSeller = await generateLLMMessage('match_seller', {
+        title: 'Year 3 English',
+        phone: phoneItem.raw,
+        handoverCode: '5521',
+        lang,
+      });
+      assert.ok(!runtimeSeller.includes('[PHONE_REDACTED]'), `Runtime seller (${lang}) must not redact phone`);
+      assert.ok(!runtimeSeller.toLowerCase().includes('redacted'), `Runtime seller (${lang}) must not redact phone`);
+      assert.ok(runtimeSeller.includes(`https://wa.me/${phoneItem.clean}`), `Runtime seller (${lang}) must contain direct link`);
+    }
+  }
+});

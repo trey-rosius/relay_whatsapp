@@ -980,11 +980,16 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
       );
       const activeIntents = nonGreetingIntents.length > 0 ? nonGreetingIntents : extractedIntents;
 
-      // Automatically promote grade-specific inquiry intents to full demand/offer intents
-      for (const item of activeIntents) {
-        if (item.intent === 'demand_inquiry' && hasExplicitSchoolYear(item.concept, payload.message_text || '')) {
+      // Automatically promote grade-specific or subject-specific inquiry intents to full demand/offer intents
+      for (const item of extractedIntents) {
+        const hasSpecificSubject =
+          item.concept !== 'GeneralBooks' &&
+          item.concept !== 'GeneralSchoolBooks' &&
+          item.concept !== 'GeneralScience' &&
+          !/^general$/i.test(item.concept);
+        if (item.intent === 'demand_inquiry' && (hasExplicitSchoolYear(item.concept, payload.message_text || '') || hasSpecificSubject)) {
           item.intent = 'demand';
-        } else if (item.intent === 'offer_inquiry' && hasExplicitSchoolYear(item.concept, payload.message_text || '')) {
+        } else if (item.intent === 'offer_inquiry' && (hasExplicitSchoolYear(item.concept, payload.message_text || '') || hasSpecificSubject)) {
           item.intent = 'offer';
         }
       }
@@ -1020,7 +1025,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
       const intentsToIterate = activeIntents;
 
       // Conversational Year Validation: If parent offers or seeks a book with NO school year specified
-      const firstOfferOrDemand = extractedIntents.find((i): i is ExtractedIntentItem & { intent: 'offer' | 'demand' } => i.intent === 'offer' || i.intent === 'demand');
+      const firstOfferOrDemand = activeIntents.find((i): i is ExtractedIntentItem & { intent: 'offer' | 'demand' } => i.intent === 'offer' || i.intent === 'demand');
       if (firstOfferOrDemand && !hasExplicitSchoolYear(firstOfferOrDemand.concept, payload.message_text || '')) {
         const lang: 'en' | 'fr' = firstOfferOrDemand.lang === 'fr' ? 'fr' : 'en';
         const hasSpecificSubject =
@@ -2124,10 +2129,14 @@ export function sanitizeExtractedTitle(
 }
 
 export function hasExplicitSchoolYear(concept: string, text: string): boolean {
-  if (/Year\d{1,2}/i.test(concept) && !concept.startsWith('General')) {
+  const textHasYear = /(?:Year|Année|Grade|Classe(?:\s+de)?)\s*\d{1,2}|\b(?:6[èe]me|5[èe]me|4[èe]me|3[èe]me|2nde|1[èe]re|Terminale|CP|CE1|CE2|CM1|CM2)\b/i.test(text || '');
+  if (textHasYear) {
     return true;
   }
-  return /(?:Year|Année|Grade|Classe(?:\s+de)?)\s*\d{1,2}|\b(?:6[èe]me|5[èe]me|4[èe]me|3[èe]me|2nde|1[èe]re|Terminale|CP|CE1|CE2|CM1|CM2)\b/i.test(text);
+  if (!text?.trim() && /Year\d{1,2}/i.test(concept) && !concept.startsWith('General')) {
+    return true;
+  }
+  return false;
 }
 
 export function normalizeConceptKey(rawConcept: unknown, fallbackText: string = ''): string {

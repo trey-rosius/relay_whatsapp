@@ -367,6 +367,45 @@ test('48h reservation (lifecycle): marks matched book as reserved and hides from
   assert.ok(matchedBook.handoverCode, 'Must have 4-digit handover code');
 });
 
+test('contact inquiry fast-path: parent asking "Which parent? Give his number" receives real unredacted contact', async () => {
+  const sellerPhone = '+15551112233';
+  const buyerPhone = '+15552223344';
+
+  // Buyer asks for seller's contact
+  const buyerInquiry = await api.handleWebhook({
+    from_phone: buyerPhone,
+    message_text: 'Which parent? Give his number',
+  });
+
+  assert.strictEqual(buyerInquiry.success, true);
+  assert.strictEqual(buyerInquiry.result.status, 'matched');
+  assert.ok(buyerInquiry.result.replyMessage, 'Must have reply message');
+  const buyerReply = buyerInquiry.result.replyMessage;
+
+  // Verify phone is NEVER redacted and contains actual seller number
+  assert.ok(buyerReply.includes('+15551112233') || buyerReply.includes('15551112233'), 'Must contain seller phone number');
+  assert.ok(buyerReply.includes('https://wa.me/15551112233'), 'Must contain direct WhatsApp link');
+  assert.ok(!buyerReply.includes('[PHONE_REDACTED]'), 'Must NOT contain [PHONE_REDACTED]');
+  assert.ok(!buyerReply.toLowerCase().includes('redacted'), 'Must NOT contain "redacted"');
+  assert.ok(!buyerReply.includes('Welcome to Relay'), 'Must NOT fall back to generic welcome tutorial');
+
+  // Seller asks for buyer's contact in French
+  const sellerInquiry = await api.handleWebhook({
+    from_phone: sellerPhone,
+    message_text: 'Quel parent ? Donne son numéro',
+  });
+
+  assert.strictEqual(sellerInquiry.success, true);
+  assert.strictEqual(sellerInquiry.result.status, 'matched');
+  const sellerReply = sellerInquiry.result.replyMessage;
+
+  assert.ok(sellerReply.includes('+15552223344') || sellerReply.includes('15552223344'), 'Must contain buyer phone number');
+  assert.ok(sellerReply.includes('https://wa.me/15552223344'), 'Must contain direct WhatsApp link');
+  assert.ok(!sellerReply.includes('[PHONE_REDACTED]'), 'Must NOT contain [PHONE_REDACTED]');
+  assert.ok(!sellerReply.toLowerCase().includes('redacted'), 'Must NOT contain "redacted"');
+  assert.ok(!sellerReply.includes('Bienvenue sur Relay'), 'Must NOT fall back to generic welcome tutorial');
+});
+
 test('48h hold expiration: sweeps and releases expired holds back to active inventory', async () => {
   const sellerPhone = '+15552223344';
   const buyerPhone = '+15552223355';
