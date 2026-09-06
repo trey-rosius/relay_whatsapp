@@ -804,8 +804,6 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         );
 
       if (isContactInquiry) {
-        const isFr = /\b(?:quel|qui|donne|num[ée]ro|c['’]est|parent|vendeur|bonjour)\b/i.test(textMessage);
-        const lang: 'en' | 'fr' = isFr ? 'fr' : 'en';
         const userClean = payload.from_phone.replace(/\D/g, '');
         const isPhoneMatch = (p?: string) => Boolean(p && p.replace(/\D/g, '') === userClean);
 
@@ -830,6 +828,12 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
             .filter((d) => isPhoneMatch(d.userPhone) && d.status === 'matched')
             .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
         }
+
+        const fallbackLang: 'en' | 'fr' =
+          buyerHold?.preferredLang === 'fr' || sellerHold?.preferredLang === 'fr' || matchedDemand?.preferredLang === 'fr'
+            ? 'fr'
+            : 'en';
+        const lang: 'en' | 'fr' = detectMessageLanguage(textMessage, fallbackLang);
 
         let replyMsg: string;
         if (buyerHold) {
@@ -1574,6 +1578,24 @@ export function formatPhoneNumber(phone: string): { display: string; cleanDigits
   return { display, cleanDigits };
 }
 
+export function detectMessageLanguage(text: string, fallbackLang: 'en' | 'fr' = 'en'): 'en' | 'fr' {
+  const clean = text.toLowerCase();
+
+  // Distinct English markers (never used in French queries)
+  const hasEnglishMarkers = /\b(?:which|who|what|where|give|his|her|their|phone|number|please|thanks|seller|buyer|\bthe\b)\b/i.test(clean);
+
+  // Distinct French markers (never used in English queries)
+  const hasFrenchMarkers = /\b(?:quel|quelle|qui|quoi|donne|num[ée]ro|c['’]est|vendeur|demandeur|acheteur|livre|merci|bonjour|salut|son|sa|ses|\ble\b|\bla\b|\bles\b|\bdu\b|\bdes\b|\bau\b|\baux\b)\b/i.test(clean);
+
+  if (hasEnglishMarkers && !hasFrenchMarkers) {
+    return 'en';
+  }
+  if (hasFrenchMarkers && !hasEnglishMarkers) {
+    return 'fr';
+  }
+  return fallbackLang;
+}
+
 export function buildBuyerMatchMessage(
   title: string,
   sellerPhone: string,
@@ -1876,7 +1898,7 @@ export async function parseParentMessageIntentsWithLLM(text: string): Promise<Ex
       /\b(handover confirmed|book received|livre bien re[çc]u|remis au parent)\b/i.test(trimmed);
 
     if (isHandoverConfirmation) {
-      const isFr = /\b(?:vendu|donn[ée]|remis|re[çc]u|fait|bon|livre|parent)\b/i.test(trimmed);
+      const isFr = /\b(?:vendu|donn[ée]|remis|re[çc]u|fait|bon|livre|remis au parent)\b/i.test(trimmed);
       const lang = isFr ? 'fr' : 'en';
       return [
         {

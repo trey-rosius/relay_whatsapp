@@ -17,6 +17,7 @@ import {
   formatDemandDisplay,
   parseParentMessageIntentsWithLLM,
   formatPhoneNumber,
+  detectMessageLanguage,
   buildBuyerMatchMessage,
   buildSellerMatchMessage,
   generateLLMMessage,
@@ -973,4 +974,26 @@ test('phone unmasking guarantee: phone numbers are NEVER redacted across any sce
       assert.ok(runtimeSeller.includes(`https://wa.me/${phoneItem.clean}`), `Runtime seller (${lang}) must contain direct link`);
     }
   }
+});
+
+test('detectMessageLanguage: correctly detects English for "which parent" and French for "quel parent"', () => {
+  // English queries (must never be falsely flagged as French because of cognate "parent")
+  assert.strictEqual(detectMessageLanguage('which parent'), 'en');
+  assert.strictEqual(detectMessageLanguage('Which parent? Give his number'), 'en');
+  assert.strictEqual(detectMessageLanguage('who is the parent?'), 'en');
+  assert.strictEqual(detectMessageLanguage('give me his number please'), 'en');
+  assert.strictEqual(detectMessageLanguage("what's their phone number"), 'en');
+  assert.strictEqual(detectMessageLanguage('who has the book'), 'en');
+
+  // French queries
+  assert.strictEqual(detectMessageLanguage('quel parent'), 'fr');
+  assert.strictEqual(detectMessageLanguage('Quel parent ? Donne son numéro'), 'fr');
+  assert.strictEqual(detectMessageLanguage("c'est qui le parent"), 'fr');
+  assert.strictEqual(detectMessageLanguage('donne son numéro'), 'fr');
+  assert.strictEqual(detectMessageLanguage('qui a le livre'), 'fr');
+  assert.strictEqual(detectMessageLanguage('contact du vendeur'), 'fr');
+
+  // Fallback behavior when query has no distinguishing markers
+  assert.strictEqual(detectMessageLanguage('parent', 'en'), 'en');
+  assert.strictEqual(detectMessageLanguage('parent', 'fr'), 'fr');
 });
