@@ -1734,6 +1734,11 @@ export async function generateLLMMessage(
       params.lang || 'en'
     );
   }
+  if (scenario === 'demand_posted') {
+    return params.lang === 'fr'
+      ? `📝 Votre demande pour *${params.title || 'le livre'}* a bien été enregistrée sur le tableau des demandes ! 📚\n\nNous vous préviendrons automatiquement dès qu'un parent proposera ce livre. 🤝`
+      : `📝 Your request for *${params.title || 'the book'}* has been added to the parent wishlist (demand board)! 📚\n\nWe will notify you automatically as soon as another parent offers this book. 🤝`;
+  }
 
   return await tracer.startSegment('bedrock_generate_llm_message', async (segment) => {
     const lang = params.lang || 'en';
