@@ -16,6 +16,10 @@ import {
   inferDomainFromConcept,
   formatDemandDisplay,
   parseParentMessageIntentsWithLLM,
+  formatPhoneNumber,
+  buildBuyerMatchMessage,
+  buildSellerMatchMessage,
+  generateLLMMessage,
 } from '../aws-blocks/index.js';
 
 // Helper to compute SHA-256 digest
@@ -831,4 +835,89 @@ test('whatsapp demand inquiry: parent stating looking for books receives search 
   assert.strictEqual(res2[0].intent, 'demand_inquiry');
   assert.strictEqual(res2[0].lang, 'fr');
   assert.ok(res2[0].replyMessage?.includes('Quel manuel ou classe recherchez-vous'));
+});
+
+// ─── 8. Deterministic Match Messages & Contact Inquiry Fast-Path ──────────────
+
+test('match notifications: buildBuyerMatchMessage formats real phone, wa.me link, and handover code without placeholders', () => {
+  const enMsg = buildBuyerMatchMessage('Year 3 English', '+237651034448', '7842', 'en');
+  assert.ok(enMsg.includes('Year 3 English'), 'Must include book title');
+  assert.ok(enMsg.includes('+237651034448'), 'Must include seller phone');
+  assert.ok(enMsg.includes('https://wa.me/237651034448'), 'Must include wa.me link');
+  assert.ok(enMsg.includes('#7842'), 'Must include verification code');
+  assert.ok(enMsg.includes('48 hours'), 'Must mention 48-hour reservation');
+  assert.ok(!enMsg.includes('[Your Bot Name]'), 'Must never include [Your Bot Name]');
+  assert.ok(!enMsg.includes('[PHONE_REDACTED]'), 'Must never include [PHONE_REDACTED]');
+  assert.ok(!enMsg.includes('If you have the phone number'), 'Must not contain Bedrock hallucinated disclaimer');
+
+  const frMsg = buildBuyerMatchMessage('Anglais 6ème', '+33612345678', '4321', 'fr');
+  assert.ok(frMsg.includes('Anglais 6ème'));
+  assert.ok(frMsg.includes('+33612345678'));
+  assert.ok(frMsg.includes('https://wa.me/33612345678'));
+  assert.ok(frMsg.includes('#4321'));
+  assert.ok(frMsg.includes('48 heures'));
+});
+
+test('match notifications: buildSellerMatchMessage formats real phone, wa.me link, and handover code without placeholders', () => {
+  const enMsg = buildSellerMatchMessage('Year 10 Physics', '+237670001122', '9912', 'en');
+  assert.ok(enMsg.includes('Year 10 Physics'), 'Must include book title');
+  assert.ok(enMsg.includes('+237670001122'), 'Must include buyer phone');
+  assert.ok(enMsg.includes('https://wa.me/237670001122'), 'Must include wa.me link');
+  assert.ok(enMsg.includes('#9912'), 'Must include verification code');
+  assert.ok(enMsg.includes('"Sold"') || enMsg.includes('*Sold*'), 'Must instruct seller to reply Sold');
+  assert.ok(!enMsg.includes('[Your Bot Name]'), 'Must never include [Your Bot Name]');
+  assert.ok(!enMsg.includes('[PHONE_REDACTED]'), 'Must never include [PHONE_REDACTED]');
+
+  const frMsg = buildSellerMatchMessage('Physique-Chimie 3ème', '+237699887766', '5566', 'fr');
+  assert.ok(frMsg.includes('Physique-Chimie 3ème'));
+  assert.ok(frMsg.includes('+237699887766'));
+  assert.ok(frMsg.includes('https://wa.me/237699887766'));
+  assert.ok(frMsg.includes('#5566'));
+  assert.ok(frMsg.includes('Vendu') || frMsg.includes('Remis'));
+});
+
+test('generateLLMMessage: match_buyer and match_seller return deterministic messages synchronously', async () => {
+  const buyerRes = await generateLLMMessage('match_buyer', {
+    title: 'Year 3 English',
+    phone: '+237651034448',
+    handoverCode: '1234',
+    lang: 'en',
+  });
+  assert.ok(buyerRes.includes('+237651034448'));
+  assert.ok(buyerRes.includes('https://wa.me/237651034448'));
+  assert.ok(buyerRes.includes('#1234'));
+
+  const sellerRes = await generateLLMMessage('match_seller', {
+    title: 'Year 3 English',
+    phone: '+237651034448',
+    handoverCode: '1234',
+    lang: 'fr',
+  });
+  assert.ok(sellerRes.includes('+237651034448'));
+  assert.ok(sellerRes.includes('https://wa.me/237651034448'));
+  assert.ok(sellerRes.includes('#1234'));
+});
+
+test('contact inquiry regex: accurately detects questions asking for matched parent contact', () => {
+  const contactPattern =
+    /\b(?:which\s+parent|who(?:'s|\s+is)\s+(?:the\s+)?(?:parent|seller|buyer|person)|give\s+(?:me\s+)?(?:his|her|their|the)\s+(?:number|phone)|what(?:'s|\s+is)\s+(?:the|his|her|their)\s+(?:phone|number|contact)|phone\s+number|contact\s+(?:info|details|number)|who\s+has\s+(?:the\s+)?(?:book|it)|where\s+is\s+(?:the\s+)?(?:number|contact)|quel\s+parent|qui\s+a\s+le\s+livre|donne(?:[\s-]+moi)?\s+son\s+num[ée]ro|quel\s+num[ée]ro|num[ée]ro\s+du\s+parent|c['’]est\s+qui\s+le\s+parent|contact\s+du\s+parent|contact\s+du\s+vendeur)\b/i;
+
+  // The exact user query from WhatsApp screenshot
+  assert.ok(contactPattern.test('Which parent? Give his number'));
+  assert.ok(contactPattern.test('give his number'));
+  assert.ok(contactPattern.test('Who is the parent?'));
+  assert.ok(contactPattern.test("What's his phone number?"));
+  assert.ok(contactPattern.test('Give me his phone number please'));
+  assert.ok(contactPattern.test('Who has the book?'));
+  assert.ok(contactPattern.test('Quel parent ? Donne son numéro'));
+  assert.ok(contactPattern.test("C'est qui le parent ?"));
+  assert.ok(contactPattern.test('Donne-moi son numéro'));
+  assert.ok(contactPattern.test('Quel numéro'));
+  assert.ok(contactPattern.test('Numéro du parent'));
+
+  // Standard book queries should NOT match
+  assert.ok(!contactPattern.test('Looking for Year 8 Maths'));
+  assert.ok(!contactPattern.test('I have Year 5 Chemistry'));
+  assert.ok(!contactPattern.test('catalog'));
+  assert.ok(!contactPattern.test('help'));
 });

@@ -796,6 +796,142 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         }
       }
 
+      // Fast-path: Parent asking about matched contact ("Which parent?", "Give his number", "Quel parent ? Donne son numéro")
+      const textMessage = (payload.message_text || '').trim();
+      const isContactInquiry =
+        /\b(?:which\s+parent|who(?:'s|\s+is)\s+(?:the\s+)?(?:parent|seller|buyer|person)|give\s+(?:me\s+)?(?:his|her|their|the)\s+(?:number|phone)|what(?:'s|\s+is)\s+(?:the|his|her|their)\s+(?:phone|number|contact)|phone\s+number|contact\s+(?:info|details|number)|who\s+has\s+(?:the\s+)?(?:book|it)|where\s+is\s+(?:the\s+)?(?:number|contact)|quel\s+parent|qui\s+a\s+le\s+livre|donne(?:[\s-]+moi)?\s+son\s+num[ée]ro|quel\s+num[ée]ro|num[ée]ro\s+du\s+parent|c['’]est\s+qui\s+le\s+parent|contact\s+du\s+parent|contact\s+du\s+vendeur)\b/i.test(
+          textMessage
+        );
+
+      if (isContactInquiry) {
+        const isFr = /\b(?:quel|qui|donne|num[ée]ro|c['’]est|parent|vendeur|bonjour)\b/i.test(textMessage);
+        const lang: 'en' | 'fr' = isFr ? 'fr' : 'en';
+        const userClean = payload.from_phone.replace(/\D/g, '');
+        const isPhoneMatch = (p?: string) => Boolean(p && p.replace(/\D/g, '') === userClean);
+
+        const allInventory = await Array.fromAsync(activeInventory.scan());
+        const now = Date.now();
+
+        // 1. User is Buyer with an active reserved hold
+        const buyerHold = allInventory
+          .filter((i) => isPhoneMatch(i.reservedForPhone) && i.status === 'reserved' && (!i.reservedUntil || i.reservedUntil > now))
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+
+        // 2. User is Seller with a book reserved for a buyer
+        const sellerHold = allInventory
+          .filter((i) => isPhoneMatch(i.sellerPhone) && i.status === 'reserved' && (!i.reservedUntil || i.reservedUntil > now))
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+
+        // 3. Check matched demand in DemandBoard
+        let matchedDemand: any = undefined;
+        if (!buyerHold && !sellerHold) {
+          const allDemands = await Array.fromAsync(demandBoard.scan());
+          matchedDemand = allDemands
+            .filter((d) => isPhoneMatch(d.userPhone) && d.status === 'matched')
+            .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+        }
+
+        let replyMsg: string;
+        if (buyerHold) {
+          const { display, cleanDigits } = formatPhoneNumber(buyerHold.sellerPhone);
+          const codeLine = buyerHold.handoverCode
+            ? (lang === 'fr' ? `🔑 *Code de vérification :* #${buyerHold.handoverCode}` : `🔑 *Handover Verification Code:* #${buyerHold.handoverCode}`)
+            : '';
+          replyMsg = lang === 'fr'
+            ? [
+                `🤝 Voici les coordonnées du parent vendeur pour votre livre *${buyerHold.title}* :`,
+                '',
+                '👤 *Contact WhatsApp :*',
+                `📞 ${display}`,
+                `💬 Écrire directement : https://wa.me/${cleanDigits}`,
+                ...(codeLine ? ['', codeLine] : []),
+                '',
+                "⏳ Ce livre vous est réservé pendant 48h. Écrivez-lui directement pour organiser l'échange !",
+              ].join('\n')
+            : [
+                `🤝 Here is the seller's contact for your book *${buyerHold.title}*:`,
+                '',
+                "👤 *Seller's WhatsApp Contact:*",
+                `📞 ${display}`,
+                `💬 Chat directly: https://wa.me/${cleanDigits}`,
+                ...(codeLine ? ['', codeLine] : []),
+                '',
+                '⏳ This book is reserved for you for 48 hours. Message them directly to arrange the handover!',
+              ].join('\n');
+        } else if (sellerHold) {
+          const { display, cleanDigits } = formatPhoneNumber(sellerHold.reservedForPhone || '');
+          const codeLine = sellerHold.handoverCode
+            ? (lang === 'fr' ? `🔑 *Code de vérification :* #${sellerHold.handoverCode}` : `🔑 *Handover Verification Code:* #${sellerHold.handoverCode}`)
+            : '';
+          replyMsg = lang === 'fr'
+            ? [
+                `🤝 Voici les coordonnées du parent demandeur pour votre livre *${sellerHold.title}* :`,
+                '',
+                '👤 *Contact WhatsApp :*',
+                `📞 ${display}`,
+                `💬 Écrire directement : https://wa.me/${cleanDigits}`,
+                ...(codeLine ? ['', codeLine] : []),
+                '',
+                '🤝 Une fois le livre remis, répondez simplement *"Vendu"* pour libérer la réservation.',
+              ].join('\n')
+            : [
+                `🤝 Here is the buyer's contact for your book *${sellerHold.title}*:`,
+                '',
+                "👤 *Buyer's WhatsApp Contact:*",
+                `📞 ${display}`,
+                `💬 Chat directly: https://wa.me/${cleanDigits}`,
+                ...(codeLine ? ['', codeLine] : []),
+                '',
+                '🤝 Once handed over, reply *"Sold"* to mark the transaction complete.',
+              ].join('\n');
+        } else if (matchedDemand) {
+          const matchedItem = allInventory.find((i) => i.itemId === matchedDemand?.matchedItemId);
+          const sellerPhone = matchedItem?.sellerPhone || '';
+          const title = matchedDemand.requestedQuery || matchedItem?.title || 'Book';
+          const handoverCode = matchedDemand.handoverCode || matchedItem?.handoverCode;
+          const { display, cleanDigits } = formatPhoneNumber(sellerPhone);
+          const codeLine = handoverCode
+            ? (lang === 'fr' ? `🔑 *Code de vérification :* #${handoverCode}` : `🔑 *Handover Verification Code:* #${handoverCode}`)
+            : '';
+          replyMsg = lang === 'fr'
+            ? [
+                `🤝 Voici les coordonnées du parent vendeur pour votre livre *${title}* :`,
+                '',
+                '👤 *Contact WhatsApp :*',
+                `📞 ${display}`,
+                `💬 Écrire directement : https://wa.me/${cleanDigits}`,
+                ...(codeLine ? ['', codeLine] : []),
+                '',
+                "⏳ Ce livre vous est réservé pendant 48h. Écrivez-lui directement pour organiser l'échange !",
+              ].join('\n')
+            : [
+                `🤝 Here is the seller's contact for your book *${title}*:`,
+                '',
+                "👤 *Seller's WhatsApp Contact:*",
+                `📞 ${display}`,
+                `💬 Chat directly: https://wa.me/${cleanDigits}`,
+                ...(codeLine ? ['', codeLine] : []),
+                '',
+                '⏳ This book is reserved for you for 48 hours. Message them directly to arrange the handover!',
+              ].join('\n');
+        } else {
+          replyMsg = lang === 'fr'
+            ? 'Je n\'ai trouvé aucune réservation de livre active associée à votre numéro de téléphone. Si vous cherchez un livre, envoyez son titre (ex : "Je cherche maths 3ème") ou tapez "catalogue" pour parcourir les livres disponibles.'
+            : 'I could not find an active book reservation associated with your phone number. If you are looking for a book, send the title (e.g. "Looking for Year 8 Maths") or type "catalog" to browse available books.';
+        }
+
+        await sendWhatsAppTextMessage(payload.from_phone, replyMsg);
+        const duration = Date.now() - startTime;
+        metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'contact_info_provided' } });
+
+        return {
+          status: 'matched',
+          replyMessage: replyMsg,
+          extractedIntentsCount: 1,
+          vectorChunksCount: 0,
+        };
+      }
+
       // Step 2: Vision & Text Extraction via Amazon Bedrock
       const extractedIntents = await context.step(`bedrock-vision-extraction-${reqId}`, async () => {
         return await tracer.startSegment('step_bedrock_extraction', async () => {
@@ -1163,11 +1299,13 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                 const buyerMsg = await generateLLMMessage('match_buyer', {
                   title: item.title,
                   phone: activeMatch.sellerPhone,
+                  handoverCode,
                   lang: buyerLang,
                 });
                 const sellerMsg = await generateLLMMessage('match_seller', {
                   title: item.title,
                   phone: payload.from_phone,
+                  handoverCode,
                   lang: sellerLang,
                 });
                 await sendWhatsAppTextMessage(payload.from_phone, buyerMsg);
@@ -1244,6 +1382,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                   itemId: id,
                   sellerLang: item.lang,
                   buyerLang: openDemand.preferredLang || 'en',
+                  handoverCode,
                 };
               }
 
@@ -1256,14 +1395,16 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
             lastItemId = matchResult.itemId;
             lastMatchedDemandId = matchResult.demand?.demandId;
             const openDemand = matchResult.demand!;
-            const sellerMsg = await generateLLMMessage('match_buyer', {
+            const sellerMsg = await generateLLMMessage('match_seller', {
               title: item.title,
               phone: openDemand.userPhone,
+              handoverCode: matchResult.handoverCode,
               lang: matchResult.sellerLang || item.lang,
             });
-            const buyerMsg = await generateLLMMessage('match_seller', {
+            const buyerMsg = await generateLLMMessage('match_buyer', {
               title: item.title,
               phone: payload.from_phone,
+              handoverCode: matchResult.handoverCode,
               lang: matchResult.buyerLang || openDemand.preferredLang || 'en',
             });
             await sendWhatsAppTextMessage(payload.from_phone, sellerMsg);
@@ -1422,6 +1563,86 @@ export function getHelpMessage(lang: 'en' | 'fr' = 'en'): string {
   ].join('\n');
 }
 
+export function formatPhoneNumber(phone: string): { display: string; cleanDigits: string } {
+  const cleanDigits = (phone || '').replace(/\D/g, '');
+  const display = phone?.startsWith('+') ? phone : (phone ? `+${phone}` : '');
+  return { display, cleanDigits };
+}
+
+export function buildBuyerMatchMessage(
+  title: string,
+  sellerPhone: string,
+  handoverCode?: string,
+  lang: 'en' | 'fr' = 'en'
+): string {
+  const { display, cleanDigits } = formatPhoneNumber(sellerPhone);
+  const codeLine = handoverCode ? `🔑 *Handover Verification Code:* #${handoverCode}` : '';
+  const codeLineFr = handoverCode ? `🔑 *Code de vérification :* #${handoverCode}` : '';
+
+  if (lang === 'fr') {
+    return [
+      '🎉 Excellente nouvelle ! Nous avons trouvé une correspondance pour votre demande :',
+      `📚 *${title}*`,
+      '',
+      '👤 *Contact WhatsApp du parent vendeur :*',
+      `📞 ${display}`,
+      `💬 Écrire directement : https://wa.me/${cleanDigits}`,
+      ...(codeLineFr ? ['', codeLineFr] : []),
+      '',
+      "⏳ *Important :* Ce livre vous est réservé pendant *48 heures*. Veuillez contacter le parent pour organiser l'échange !",
+    ].join('\n');
+  }
+
+  return [
+    '🎉 Great news! We found a match for your book request:',
+    `📚 *${title}*`,
+    '',
+    "👤 *Seller's WhatsApp Contact:*",
+    `📞 ${display}`,
+    `💬 Chat directly: https://wa.me/${cleanDigits}`,
+    ...(codeLine ? ['', codeLine] : []),
+    '',
+    '⏳ *Important:* This book is reserved for you for *48 hours*. Please contact the seller to coordinate the handover!',
+  ].join('\n');
+}
+
+export function buildSellerMatchMessage(
+  title: string,
+  buyerPhone: string,
+  handoverCode?: string,
+  lang: 'en' | 'fr' = 'en'
+): string {
+  const { display, cleanDigits } = formatPhoneNumber(buyerPhone);
+  const codeLine = handoverCode ? `🔑 *Handover Verification Code:* #${handoverCode}` : '';
+  const codeLineFr = handoverCode ? `🔑 *Code de vérification :* #${handoverCode}` : '';
+
+  if (lang === 'fr') {
+    return [
+      '🎉 Excellente nouvelle ! Un parent recherche votre livre :',
+      `📚 *${title}*`,
+      '',
+      '👤 *Contact WhatsApp du parent demandeur :*',
+      `📞 ${display}`,
+      `💬 Écrire directement : https://wa.me/${cleanDigits}`,
+      ...(codeLineFr ? ['', codeLineFr] : []),
+      '',
+      '🤝 Une fois le livre remis, répondez simplement *"Vendu"* ou *"Remis"* pour mettre à jour le catalogue. Merci pour votre aide !',
+    ].join('\n');
+  }
+
+  return [
+    '🎉 Great news! A parent is looking for your book:',
+    `📚 *${title}*`,
+    '',
+    "👤 *Buyer's WhatsApp Contact:*",
+    `📞 ${display}`,
+    `💬 Chat directly: https://wa.me/${cleanDigits}`,
+    ...(codeLine ? ['', codeLine] : []),
+    '',
+    '🤝 Once you have completed the exchange, reply *"Sold"* or *"Vendu"* to update our catalog. Thank you for sharing with the school community!',
+  ].join('\n');
+}
+
 export function buildLLMMessagePrompt(
   scenario: string,
   lang: 'en' | 'fr',
@@ -1460,6 +1681,7 @@ export async function generateLLMMessage(
   params: {
     title?: string;
     phone?: string;
+    handoverCode?: string;
     lang?: 'en' | 'fr';
     subject?: string;
     intentType?: 'offer' | 'demand';
@@ -1468,6 +1690,22 @@ export async function generateLLMMessage(
 ): Promise<string> {
   if (scenario === 'greeting') {
     return getHelpMessage(params.lang || 'en');
+  }
+  if (scenario === 'match_buyer') {
+    return buildBuyerMatchMessage(
+      params.title || 'Book',
+      params.phone || '',
+      params.handoverCode as string | undefined,
+      params.lang || 'en'
+    );
+  }
+  if (scenario === 'match_seller') {
+    return buildSellerMatchMessage(
+      params.title || 'Book',
+      params.phone || '',
+      params.handoverCode as string | undefined,
+      params.lang || 'en'
+    );
   }
 
   return await tracer.startSegment('bedrock_generate_llm_message', async (segment) => {
@@ -1513,7 +1751,9 @@ export async function generateLLMMessage(
       if (text) {
         // Restore real phone number in output if redacted
         if (params.phone) {
-          return text.replace(/\+\d+\s*\(redacted\)/gi, params.phone);
+          return text
+            .replace(/\[PHONE_REDACTED\]/gi, params.phone)
+            .replace(/\+\d+\s*\(redacted\)/gi, params.phone);
         }
         return text;
       }
@@ -1537,7 +1777,9 @@ export async function generateLLMMessage(
       const text = response.output?.message?.content?.[0]?.text?.trim();
       if (text) {
         if (params.phone) {
-          return text.replace(/\+\d+\s*\(redacted\)/gi, params.phone);
+          return text
+            .replace(/\[PHONE_REDACTED\]/gi, params.phone)
+            .replace(/\+\d+\s*\(redacted\)/gi, params.phone);
         }
         return text;
       }
