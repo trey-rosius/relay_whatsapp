@@ -878,172 +878,19 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         }
       }
 
-      // Fast-path: Parent asking about matched contact ("Which parent?", "Give his number", "Quel parent ? Donne son numéro")
+      // Fast-path: Normalized message representation for typo-tolerant stemming
       const textMessage = (payload.message_text || '').trim();
+      const normText = normalizeTextForMatching(textMessage);
+
+      // Fast-path: Parent asking about matched contact ("Which parent?", "Give his number", "Quel parent ? Donne son numéro")
       const isContactInquiry =
-        /\b(?:which\s+parent|who(?:'s|\s+is)\s+(?:the\s+)?(?:parent|seller|buyer|person)|give\s+(?:me\s+)?(?:his|her|their|the)\s+(?:number|phone)|what(?:'s|\s+is)\s+(?:the|his|her|their)\s+(?:phone|number|contact)|phone\s+number|contact\s+(?:info|details|number)|who\s+has\s+(?:the\s+)?(?:book|it)|where\s+is\s+(?:the\s+)?(?:number|contact)|quel\s+parent|qui\s+a\s+le\s+livre|donne(?:[\s-]+moi)?\s+son\s+num[ée]ro|quel\s+num[ée]ro|num[ée]ro\s+du\s+parent|c['’]est\s+qui\s+le\s+parent|contact\s+du\s+parent|contact\s+du\s+vendeur)\b/i.test(
-          textMessage
+        /\b(?:which\s+parent|who(?:'s|\s+is)\s+(?:the\s+)?(?:parent|seller|buyer|person)|give\s+(?:me\s+)?(?:his|her|their|the)\s+(?:number|phone|num|contact)|what(?:'s|\s+is)\s+(?:the|his|her|their)\s+(?:phone|number|contact)|phone\s+number|contact\s+(?:info|details|number)|who\s+has\s+(?:the\s+)?(?:book|it)|where\s+is\s+(?:the\s+)?(?:number|contact)|quel\s+parent|qui\s+a\s+(?:le\s+)?livr|donne(?:[\s-]+moi)?\s+son\s+num|quel\s+num|num(?:ero)?\s+du\s+parent|c[']?est\s+qui\s+le\s+parent|contact\s+du\s+parent|contact\s+du\s+vendeur)\b/i.test(
+          normText
         );
 
       if (isContactInquiry) {
-        const userClean = payload.from_phone.replace(/\D/g, '');
-        const isPhoneMatch = (p?: string) => Boolean(p && p.replace(/\D/g, '') === userClean);
-
-        const allInventory = await Array.fromAsync(activeInventory.scan());
-        const now = Date.now();
-
-        // 1. User is Buyer with active reserved hold(s)
-        const buyerHolds = allInventory
-          .filter((i) => isPhoneMatch(i.reservedForPhone) && i.status === 'reserved' && (!i.reservedUntil || i.reservedUntil > now))
-          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-        const buyerHold = buyerHolds[0];
-
-        // 2. User is Seller with a book reserved for a buyer
-        const sellerHold = allInventory
-          .filter((i) => isPhoneMatch(i.sellerPhone) && i.status === 'reserved' && (!i.reservedUntil || i.reservedUntil > now))
-          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
-
-        // 3. Check matched demand in DemandBoard
-        let matchedDemand: any = undefined;
-        if (!buyerHold && !sellerHold) {
-          const allDemands = await Array.fromAsync(demandBoard.scan());
-          matchedDemand = allDemands
-            .filter((d) => isPhoneMatch(d.userPhone) && d.status === 'matched')
-            .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
-        }
-
-        const fallbackLang: 'en' | 'fr' =
-          buyerHold?.preferredLang === 'fr' || sellerHold?.preferredLang === 'fr' || matchedDemand?.preferredLang === 'fr'
-            ? 'fr'
-            : 'en';
-        const lang: 'en' | 'fr' = detectMessageLanguage(textMessage, fallbackLang);
-
-        let replyMsg: string;
-        if (buyerHolds.length > 0) {
-          const sellerMap = new Map<string, typeof buyerHolds>();
-          for (const hold of buyerHolds) {
-            const list = sellerMap.get(hold.sellerPhone) || [];
-            list.push(hold);
-            sellerMap.set(hold.sellerPhone, list);
-          }
-
-          if (sellerMap.size === 1) {
-            const hold = buyerHolds[0];
-            const { display, cleanDigits } = formatPhoneNumber(hold.sellerPhone);
-            const codeLine = hold.handoverCode
-              ? (lang === 'fr' ? `🔑 *Code de vérification :* #${hold.handoverCode}` : `🔑 *Handover Verification Code:* #${hold.handoverCode}`)
-              : '';
-            replyMsg = lang === 'fr'
-              ? [
-                  `🤝 Voici les coordonnées du parent vendeur pour votre livre *${hold.title}* :`,
-                  '',
-                  '👤 *Contact WhatsApp :*',
-                  `📞 ${display}`,
-                  `💬 Écrire directement : https://wa.me/${cleanDigits}`,
-                  ...(codeLine ? ['', codeLine] : []),
-                  '',
-                  "⏳ Ce livre vous est réservé pendant 48h. Écrivez-lui directement pour organiser l'échange !",
-                ].join('\n')
-              : [
-                  `🤝 Here is the seller's contact for your book *${hold.title}*:`,
-                  '',
-                  "👤 *Seller's WhatsApp Contact:*",
-                  `📞 ${display}`,
-                  `💬 Chat directly: https://wa.me/${cleanDigits}`,
-                  ...(codeLine ? ['', codeLine] : []),
-                  '',
-                  '⏳ This book is reserved for you for 48 hours. Message them directly to arrange the handover!',
-                ].join('\n');
-          } else {
-            const sellerSections = Array.from(sellerMap.entries()).map(([sellerPhone, holds], sIdx) => {
-              const { display, cleanDigits } = formatPhoneNumber(sellerPhone);
-              const booksList = holds.map((h) => `  • *${h.title}* (Code: #${h.handoverCode})`).join('\n');
-              return [
-                `👤 *Parent ${sIdx + 1}:*`,
-                booksList,
-                `📞 ${display}`,
-                `💬 Chat: https://wa.me/${cleanDigits}`,
-              ].join('\n');
-            });
-
-            replyMsg = lang === 'fr'
-              ? [
-                  `🤝 Voici les coordonnées des parents vendeurs pour vos livres réservés :`,
-                  '',
-                  sellerSections.join('\n\n'),
-                  '',
-                  "⏳ Ces livres vous sont réservés pendant 48h. Écrivez-leur directement pour organiser l'échange !",
-                ].join('\n')
-              : [
-                  `🤝 Here are the seller contacts for your reserved books:`,
-                  '',
-                  sellerSections.join('\n\n'),
-                  '',
-                  '⏳ These books are reserved for you for 48 hours. Message them directly to coordinate the handover!',
-                ].join('\n');
-          }
-        } else if (sellerHold) {
-          const { display, cleanDigits } = formatPhoneNumber(sellerHold.reservedForPhone || '');
-          const codeLine = sellerHold.handoverCode
-            ? (lang === 'fr' ? `🔑 *Code de vérification :* #${sellerHold.handoverCode}` : `🔑 *Handover Verification Code:* #${sellerHold.handoverCode}`)
-            : '';
-          replyMsg = lang === 'fr'
-            ? [
-                `🤝 Voici les coordonnées du parent demandeur pour votre livre *${sellerHold.title}* :`,
-                '',
-                '👤 *Contact WhatsApp :*',
-                `📞 ${display}`,
-                `💬 Écrire directement : https://wa.me/${cleanDigits}`,
-                ...(codeLine ? ['', codeLine] : []),
-                '',
-                '🤝 Une fois le livre remis, répondez simplement *"Vendu"* pour libérer la réservation.',
-              ].join('\n')
-            : [
-                `🤝 Here is the buyer's contact for your book *${sellerHold.title}*:`,
-                '',
-                "👤 *Buyer's WhatsApp Contact:*",
-                `📞 ${display}`,
-                `💬 Chat directly: https://wa.me/${cleanDigits}`,
-                ...(codeLine ? ['', codeLine] : []),
-                '',
-                '🤝 Once handed over, reply *"Sold"* to mark the transaction complete.',
-              ].join('\n');
-        } else if (matchedDemand) {
-          const matchedItem = allInventory.find((i) => i.itemId === matchedDemand?.matchedItemId);
-          const sellerPhone = matchedItem?.sellerPhone || '';
-          const title = matchedDemand.requestedQuery || matchedItem?.title || 'Book';
-          const handoverCode = matchedDemand.handoverCode || matchedItem?.handoverCode;
-          const { display, cleanDigits } = formatPhoneNumber(sellerPhone);
-          const codeLine = handoverCode
-            ? (lang === 'fr' ? `🔑 *Code de vérification :* #${handoverCode}` : `🔑 *Handover Verification Code:* #${handoverCode}`)
-            : '';
-          replyMsg = lang === 'fr'
-            ? [
-                `🤝 Voici les coordonnées du parent vendeur pour votre livre *${title}* :`,
-                '',
-                '👤 *Contact WhatsApp :*',
-                `📞 ${display}`,
-                `💬 Écrire directement : https://wa.me/${cleanDigits}`,
-                ...(codeLine ? ['', codeLine] : []),
-                '',
-                "⏳ Ce livre vous est réservé pendant 48h. Écrivez-lui directement pour organiser l'échange !",
-              ].join('\n')
-            : [
-                `🤝 Here is the seller's contact for your book *${title}*:`,
-                '',
-                "👤 *Seller's WhatsApp Contact:*",
-                `📞 ${display}`,
-                `💬 Chat directly: https://wa.me/${cleanDigits}`,
-                ...(codeLine ? ['', codeLine] : []),
-                '',
-                '⏳ This book is reserved for you for 48 hours. Message them directly to arrange the handover!',
-              ].join('\n');
-        } else {
-          replyMsg = lang === 'fr'
-            ? 'Je n\'ai trouvé aucune réservation de livre active associée à votre numéro de téléphone. Si vous cherchez un livre, envoyez son titre (ex : "Je cherche maths 3ème") ou tapez "catalogue" pour parcourir les livres disponibles.'
-            : 'I could not find an active book reservation associated with your phone number. If you are looking for a book, send the title (e.g. "Looking for Year 8 Maths") or type "catalog" to browse available books.';
-        }
-
+        const lang = detectMessageLanguage(textMessage, 'en');
+        const replyMsg = await resolveMatchedContact(payload.from_phone, lang);
         await sendWhatsAppTextMessage(payload.from_phone, replyMsg);
         const duration = Date.now() - startTime;
         metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'contact_info_provided' } });
@@ -1058,7 +905,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
       // Fast-path: Parent asking to browse remaining overflow grades ("Other Grades", "Autres Classes")
       const isOtherGradesInquiry =
-        /\b(?:other\s+grades?|autres?\s+classes?|other\s+books?|autres?\s+livres?|more\s+grades?|plus\s+de\s+classes?)\b/i.test(textMessage);
+        /\b(?:other\s+grad|autr\s+class|other\s+book|autr\s+livr|more\s+grad|plus\s+de\s+class)\b/i.test(normText);
 
       if (isOtherGradesInquiry) {
         const allInventory = await Array.fromAsync(activeInventory.scan());
@@ -1066,8 +913,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         const activeBooks = allInventory.filter(
           (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
         );
-        const isFrenchExplicit = /\b(?:autres?\s+classes?|autres?\s+livres?|plus\s+de\s+classes?)\b/i.test(textMessage);
-        const lang = isFrenchExplicit ? 'fr' : detectMessageLanguage(textMessage, 'en');
+        const lang = detectMessageLanguage(textMessage, 'en');
         const otherPayload = buildInteractiveOtherGradesPayload(activeBooks, lang);
         const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, otherPayload);
         if (!dispatchRes) {
@@ -1089,13 +935,12 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         payload.interactive?.id === 'my_books' ||
         payload.interactive?.id === 'my_activity' ||
         payload.interactive?.id === 'my_account' ||
-        /\b(?:my\s+books?|my\s+listings?|my\s+activity|my\s+account|my\s+demands?|my\s+requests?|what\s+did\s+i\s+(?:add|sell|buy|request|post|list)|books?\s+i\s+(?:added|sold|bought|demanded|listed|posted)|mes\s+livres|mes\s+annonces|mon\s+activit[ée]|mes\s+demandes|mon\s+compte|qu['’]est-ce\s+que\s+j['’]ai\s+(?:ajout[ée]|vendu|achet[ée]|demand[ée])|livres?\s+que\s+j['’]ai\s+(?:ajout[ée]s?|vendus?|achet[ée]s?|demand[ée]s?))\b/i.test(
-          textMessage
+        /\b(?:my\s+book|my\s+list|my\s+activ|my\s+account|my\s+demand|my\s+request|what\s+did\s+i|book\s+i\s+(?:add|sold|bought|demand|list|post)|mes\s+livr|mes\s+annonc|mon\s+activ|mes\s+demand|mon\s+compt|qu[']?est-ce\s+que\s+j[']?ai|livr.*que\s+j[']?ai)\b/i.test(
+          normText
         );
 
       if (isParentActivityInquiry) {
-        const isFrenchExplicit = /\b(?:mes\s+livres|mes\s+annonces|mon\s+activit[ée]|mes\s+demandes|mon\s+compte|qu['’]est-ce|j['’]ai|vendus?|achet[ée]s?|ajout[ée]s?|demand[ée]s?)\b/i.test(textMessage);
-        const lang = isFrenchExplicit ? 'fr' : detectMessageLanguage(textMessage, 'en');
+        const lang = detectMessageLanguage(textMessage, 'en');
         const summaryMsg = await buildParentActivitySummary(payload.from_phone, lang);
         await sendWhatsAppTextMessage(payload.from_phone, summaryMsg);
         const duration = Date.now() - startTime;
@@ -1176,8 +1021,60 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         (activeIntents[0]?.intent === 'greeting' ||
           activeIntents[0]?.intent === 'spam' ||
           activeIntents[0]?.intent === 'offer_inquiry' ||
-          activeIntents[0]?.intent === 'demand_inquiry')
+          activeIntents[0]?.intent === 'demand_inquiry' ||
+          activeIntents[0]?.intent === 'parent_activity' ||
+          activeIntents[0]?.intent === 'contact_inquiry' ||
+          activeIntents[0]?.intent === 'other_grades')
       ) {
+        if (activeIntents[0].intent === 'parent_activity') {
+          const lang = activeIntents[0].lang || 'en';
+          const summaryMsg = await buildParentActivitySummary(payload.from_phone, lang);
+          await sendWhatsAppTextMessage(payload.from_phone, summaryMsg);
+          const duration = Date.now() - startTime;
+          metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'parent_activity_summary_sent' } });
+          return {
+            status: 'processed',
+            replyMessage: summaryMsg,
+            extractedIntentsCount: 1,
+            vectorChunksCount: 0,
+          };
+        }
+        if (activeIntents[0].intent === 'contact_inquiry') {
+          const lang = activeIntents[0].lang || 'en';
+          const contactMsg = await resolveMatchedContact(payload.from_phone, lang);
+          await sendWhatsAppTextMessage(payload.from_phone, contactMsg);
+          const duration = Date.now() - startTime;
+          metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'contact_info_provided' } });
+          return {
+            status: 'matched',
+            replyMessage: contactMsg,
+            extractedIntentsCount: 1,
+            vectorChunksCount: 0,
+          };
+        }
+        if (activeIntents[0].intent === 'other_grades') {
+          const allInventory = await Array.fromAsync(activeInventory.scan());
+          const now = Date.now();
+          const activeBooks = allInventory.filter(
+            (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
+          );
+          const lang = activeIntents[0].lang || 'en';
+          const otherPayload = buildInteractiveOtherGradesPayload(activeBooks, lang);
+          const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, otherPayload);
+          if (!dispatchRes) {
+            await sendWhatsAppTextMessage(payload.from_phone, buildGroupedCatalogText(activeBooks, lang));
+          }
+          const replyText = lang === 'fr' ? 'Catalogue envoyé pour Autres Classes' : 'Catalog sent for Other Grades';
+          const duration = Date.now() - startTime;
+          metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'other_grades_catalog_sent' } });
+          return {
+            status: 'processed',
+            replyMessage: replyText,
+            extractedIntentsCount: 1,
+            vectorChunksCount: 0,
+          };
+        }
+
         const lang = activeIntents[0].lang || 'en';
         const replyMsg =
           activeIntents[0].replyMessage || (await generateLLMMessage('greeting', { lang }));
@@ -1414,6 +1311,47 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                 await sendWhatsAppTextMessage(payload.from_phone, fullMessage);
                 lastReplyMessage = fullMessage;
               }
+              overallStatus = 'processed';
+              return true;
+            });
+          });
+          continue;
+        } else if (item.intent === 'parent_activity') {
+          await context.step(`process-parent-activity-${reqId}-${idx}`, async () => {
+            return await tracer.startSegment('step_parent_activity', async () => {
+              const summaryMsg = await buildParentActivitySummary(payload.from_phone, item.lang);
+              await sendWhatsAppTextMessage(payload.from_phone, summaryMsg);
+              lastReplyMessage = summaryMsg;
+              overallStatus = 'processed';
+              return true;
+            });
+          });
+          continue;
+        } else if (item.intent === 'contact_inquiry') {
+          await context.step(`process-contact-inquiry-${reqId}-${idx}`, async () => {
+            return await tracer.startSegment('step_contact_inquiry', async () => {
+              const contactMsg = await resolveMatchedContact(payload.from_phone, item.lang);
+              await sendWhatsAppTextMessage(payload.from_phone, contactMsg);
+              lastReplyMessage = contactMsg;
+              overallStatus = 'matched';
+              return true;
+            });
+          });
+          continue;
+        } else if (item.intent === 'other_grades') {
+          await context.step(`process-other-grades-${reqId}-${idx}`, async () => {
+            return await tracer.startSegment('step_other_grades', async () => {
+              const allInventory = await Array.fromAsync(activeInventory.scan());
+              const now = Date.now();
+              const activeBooks = allInventory.filter(
+                (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
+              );
+              const otherPayload = buildInteractiveOtherGradesPayload(activeBooks, item.lang);
+              const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, otherPayload);
+              if (!dispatchRes) {
+                await sendWhatsAppTextMessage(payload.from_phone, buildGroupedCatalogText(activeBooks, item.lang));
+              }
+              lastReplyMessage = item.lang === 'fr' ? 'Catalogue envoyé pour Autres Classes' : 'Catalog sent for Other Grades';
               overallStatus = 'processed';
               return true;
             });
@@ -1761,7 +1699,19 @@ export interface WhatsAppInboundPayload {
 }
 
 export interface ExtractedIntentItem {
-  intent: 'offer' | 'demand' | 'greeting' | 'spam' | 'catalog' | 'demand_board' | 'confirm_handover' | 'offer_inquiry' | 'demand_inquiry';
+  intent:
+    | 'offer'
+    | 'demand'
+    | 'greeting'
+    | 'spam'
+    | 'catalog'
+    | 'demand_board'
+    | 'confirm_handover'
+    | 'offer_inquiry'
+    | 'demand_inquiry'
+    | 'parent_activity'
+    | 'contact_inquiry'
+    | 'other_grades';
   lang: 'en' | 'fr';
   concept: string;
   title: string;
@@ -1806,19 +1756,54 @@ export function formatPhoneNumber(phone: string): { display: string; cleanDigits
   return { display, cleanDigits };
 }
 
+/**
+ * Normalizes text for typo-tolerant matching:
+ * - Strips diacritics/accents (e.g. é/è/ê -> e, ç -> c, à -> a)
+ * - Lowercases and normalizes apostrophes and whitespaces
+ */
+export function normalizeTextForMatching(text: string): string {
+  return (text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/['’]/g, "'")
+    .replace(/[^\w\s']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function detectMessageLanguage(text: string, fallbackLang: 'en' | 'fr' = 'en'): 'en' | 'fr' {
-  const clean = text.toLowerCase();
+  const norm = normalizeTextForMatching(text);
 
-  // Distinct English markers (never used in French queries)
-  const hasEnglishMarkers = /\b(?:which|who|what|where|give|his|her|their|phone|number|please|thanks|seller|buyer|\bthe\b|my|our|books?|listings?|demands?|requests?|have|need|want|looking|search|sold|bought|added|listed|activity|account|catalog|grade|grades)\b/i.test(clean);
+  // Distinct English marker patterns (matched against accent-normalized text)
+  const englishPatterns = [
+    /\b(?:which|who|what|where|when|how|give|his|her|their|phone|number|numb|please|pleas|thanks|thank|seller|buyer)\b/i,
+    /\b(?:the|my|our|your|book|books|listing|listings|demand|demands|request|requests|have|need|want|looking|search|sold|bought|added|listed|activity|account|catalog|grade|grades|year|offering)\b/i,
+  ];
 
-  // Distinct French markers (never used in English queries)
-  const hasFrenchMarkers = /\b(?:quel|quelle|qui|quoi|donne|num[ée]ro|c['’]est|vendeur|demandeur|acheteur|livres?|manuels?|annonces?|classes?|autres?|activit[ée]s?|compte|merci|bonjour|bonsoir|salut|mon|ma|mes|notre|nos|votre|vos|son|sa|ses|\ble\b|\bla\b|\bles\b|\bdu\b|\bdes\b|\bau\b|\baux\b|j['’]ai|je|moi|cherche|recherche|besoin|demandes?|vendus?|achet[ée]s?|ajout[ée]s?|svp|s['’]il vous pla[îi]t|catalogue|ann[ée]es?)\b/i.test(clean);
+  // Distinct French marker patterns (matched against accent-normalized text)
+  const frenchPatterns = [
+    /\b(?:quel|quelle|qui|quoi|donne|donn|numero|num|c'est|vendeur|demandeur|acheteur|merci|bonjour|bonsoir|salut|salu|svp|plait|plaise)\b/i,
+    /\b(?:livre|livres|livr|manuel|manuels|annonce|annonces|annonc|classe|classes|autre|autres|autr|activite|activites|activit|compte|compt)\b/i,
+    /\b(?:mon|ma|mes|notre|nos|votre|vos|son|sa|ses|le|la|les|du|des|au|aux|un|une|j'ai|je|moi|cherche|recherche|besoin|demande|demandes|vendu|vendus|achete|achetes|ajoute|ajoutes|catalogue|annee|annees)\b/i,
+  ];
 
-  if (hasEnglishMarkers && !hasFrenchMarkers) {
+  let englishScore = 0;
+  for (const pat of englishPatterns) {
+    const matches = norm.match(new RegExp(pat.source, 'gi'));
+    if (matches) englishScore += matches.length;
+  }
+
+  let frenchScore = 0;
+  for (const pat of frenchPatterns) {
+    const matches = norm.match(new RegExp(pat.source, 'gi'));
+    if (matches) frenchScore += matches.length;
+  }
+
+  if (englishScore > frenchScore) {
     return 'en';
   }
-  if (hasFrenchMarkers && !hasEnglishMarkers) {
+  if (frenchScore > englishScore) {
     return 'fr';
   }
   return fallbackLang;
@@ -2052,12 +2037,15 @@ Categories of intent:
 6. "offer": The parent is offering/listing one or more specific books or subjects (e.g., "I have Year 6 Maths", "Selling Year 10 Physics", "J'ai un livre de chimie 3ème", "I have chemistry").
 7. "demand": The parent is looking for/requesting one or more specific books or subjects (e.g., "Looking for Year 6 Maths", "Need Year 10 Physics", "Je cherche livre de chimie 3ème", "Looking for chemistry").
 8. "confirm_handover": The parent is confirming that a book was sold, handed over, donated, or delivered to another parent, or that the exchange is complete (e.g., "sold", "vendu", "handed over", "remis au parent", "I gave the book", "got the books", "exchange done", "c'est fait", "livre remis").
+9. "parent_activity": The parent wants to see or check the status of their personal listings, sales, reserved holds, active requests, or account history (e.g., "my books", "mes livres", "my activity", "mon activité", "what did i list", "my listings", "mes annonces", "ce que j'ai mis", "my account", "mes demandes", "what did i post").
+10. "contact_inquiry": The parent is asking for the contact information, phone number, or identity of the parent they matched with for a book exchange (e.g., "which parent", "who has the book", "give me his number", "quel parent", "donne son numéro", "qui a le livre", "contact du vendeur", "what is their phone number").
+11. "other_grades": The parent wants to browse remaining or overflow classes/grades outside the primary list (e.g., "other grades", "autres classes", "more grades", "plus de classes", "other levels", "autres niveaux").
 
 User Message: "${sanitizedText.replace(/"/g, '\\"')}"
 
 Rules for fields:
 - MULTI-BOOK EXTRACTION: When a parent lists multiple subjects or books (e.g. "I have year 10 and 11 books: Chemistry, Physics, Additional maths, English, French, ICT, Maths, Economics, Biology"), extract EACH individual book/subject as a separate item in the "intents" array. Apply the specified year(s) to every listed subject (e.g. "Year 10 & 11 Chemistry", "Year 10 & 11 Physics").
-- "title": MUST be a clear book title (e.g. "Books for Year 7", "Year 5 Chemistry Textbook", "Livres pour l'Année 6"). NEVER output placeholder strings like "Books for Year <N> <Subject>" or "Year N". For "offer_inquiry" / "demand_inquiry" / "confirm_handover", use "General Books".
+- "title": MUST be a clear book title (e.g. "Books for Year 7", "Year 5 Chemistry Textbook", "Livres pour l'Année 6"). NEVER output placeholder strings like "Books for Year <N> <Subject>" or "Year N". For "offer_inquiry" / "demand_inquiry" / "confirm_handover" / "parent_activity" / "contact_inquiry" / "other_grades", use "General Books".
 - "concept": MUST be in format "Year<Number><SubjectOrBooks>" (e.g. "Year7Books", "Year5Chemistry", "Year12Mathematics", "GeneralBooks"). Never output literal "<N>".
 - If no year is specified by the parent (e.g. "Looking for chemistry"), infer the closest subject or use "GeneralChemistry" / "GeneralBooks".
 
@@ -2065,7 +2053,7 @@ Extract all intents from the message into JSON:
 {
   "intents": [
     {
-      "intent": "offer" | "demand" | "offer_inquiry" | "demand_inquiry" | "catalog" | "demand_board" | "greeting" | "confirm_handover",
+      "intent": "offer" | "demand" | "offer_inquiry" | "demand_inquiry" | "catalog" | "demand_board" | "greeting" | "confirm_handover" | "parent_activity" | "contact_inquiry" | "other_grades",
       "lang": "en" | "fr",
       "concept": "Year7Books" | "Year5Chemistry" | "Year12Mathematics" | "GeneralBooks",
       "title": "Books for Year 7" | "Year 5 Chemistry Textbook" | "General Books",
@@ -2202,6 +2190,71 @@ export async function parseParentMessageIntentsWithLLM(text: string): Promise<Ex
       ];
     }
 
+    // Fast-path for parent activity / listings ("my books", "mes livres", "my activity", "mon activité", "mes annonces", "my account")
+    const normText = normalizeTextForMatching(text);
+    const isParentActivityFastPath =
+      /\b(?:my\s+book|my\s+list|my\s+activ|my\s+account|my\s+demand|my\s+request|what\s+did\s+i|book\s+i\s+(?:add|sold|bought|demand|list|post)|mes\s+livr|mes\s+annonc|mon\s+activ|mes\s+demand|mon\s+compt|qu[']?est-ce\s+que\s+j[']?ai|livr.*que\s+j[']?ai)\b/i.test(
+        normText
+      );
+
+    if (isParentActivityFastPath) {
+      const lang = detectMessageLanguage(text, 'en');
+      return [
+        {
+          intent: 'parent_activity',
+          lang,
+          concept: 'GeneralBooks',
+          title: lang === 'fr' ? 'Mon Activité' : 'My Activity',
+          domain: 'Science',
+          providerCategory: 'HighSchool',
+          conditionType: 'Good',
+          description: text,
+        },
+      ];
+    }
+
+    // Fast-path for matched contact inquiries ("which parent", "quel parent", "give his number", "donne son numéro")
+    const isContactInquiryFastPath =
+      /\b(?:which\s+parent|who(?:'s|\s+is)\s+(?:the\s+)?(?:parent|seller|buyer|person)|give\s+(?:me\s+)?(?:his|her|their|the)\s+(?:number|phone|num|contact)|what(?:'s|\s+is)\s+(?:the|his|her|their)\s+(?:phone|number|contact)|phone\s+number|contact\s+(?:info|details|number)|who\s+has\s+(?:the\s+)?(?:book|it)|where\s+is\s+(?:the\s+)?(?:number|contact)|quel\s+parent|qui\s+a\s+(?:le\s+)?livr|donne(?:[\s-]+moi)?\s+son\s+num|quel\s+num|num(?:ero)?\s+du\s+parent|c[']?est\s+qui\s+le\s+parent|contact\s+du\s+parent|contact\s+du\s+vendeur)\b/i.test(
+        normText
+      );
+
+    if (isContactInquiryFastPath) {
+      const lang = detectMessageLanguage(text, 'en');
+      return [
+        {
+          intent: 'contact_inquiry',
+          lang,
+          concept: 'GeneralBooks',
+          title: lang === 'fr' ? 'Contact du Parent' : 'Parent Contact',
+          domain: 'Science',
+          providerCategory: 'HighSchool',
+          conditionType: 'Good',
+          description: text,
+        },
+      ];
+    }
+
+    // Fast-path for other grades catalog ("other grades", "autres classes", "more grades", "plus de classes")
+    const isOtherGradesFastPath =
+      /\b(?:other\s+grad|autr\s+class|other\s+book|autr\s+livr|more\s+grad|plus\s+de\s+class)\b/i.test(normText);
+
+    if (isOtherGradesFastPath) {
+      const lang = detectMessageLanguage(text, 'en');
+      return [
+        {
+          intent: 'other_grades',
+          lang,
+          concept: 'GeneralBooks',
+          title: lang === 'fr' ? 'Autres Classes' : 'Other Grades',
+          domain: 'Science',
+          providerCategory: 'HighSchool',
+          conditionType: 'Good',
+          description: text,
+        },
+      ];
+    }
+
     // Anonymize in-prompt PII
     const sanitizedText = maskPromptPII(text);
     segment.addAnnotation('originalTextLength', text.length);
@@ -2325,6 +2378,15 @@ export async function parseParentMessageIntentsWithLLM(text: string): Promise<Ex
                 ? `👋 Quel manuel ou classe recherchez-vous ? 📚\n\nIndiquez-nous la classe et la matière (ex : *6ème Maths*, *Year 10 Physics*), ou tapez *catalogue* pour voir tous les livres disponibles ! 🔍`
                 : `👋 What book or school year are you looking for? 📚\n\nPlease reply with the grade and subject (e.g. *Year 10 Physics*, *6ème Maths*), or type *catalog* to browse all available books! 🔍`;
           }
+        } else if (item.intent === 'parent_activity') {
+          item.concept = item.concept || 'GeneralBooks';
+          item.title = item.lang === 'fr' ? 'Mon Activité' : 'My Activity';
+        } else if (item.intent === 'contact_inquiry') {
+          item.concept = item.concept || 'GeneralBooks';
+          item.title = item.lang === 'fr' ? 'Contact du Parent' : 'Parent Contact';
+        } else if (item.intent === 'other_grades') {
+          item.concept = item.concept || 'GeneralBooks';
+          item.title = item.lang === 'fr' ? 'Autres Classes' : 'Other Grades';
         }
 
         return item;
@@ -3571,6 +3633,178 @@ export async function buildParentActivitySummary(
   }
 
   return sections.join('\n');
+}
+
+/**
+ * Resolves matched seller/buyer contact details for a parent with active reserved holds or matched demands.
+ */
+export async function resolveMatchedContact(
+  fromPhone: string,
+  lang: 'en' | 'fr' = 'en'
+): Promise<string> {
+  const userClean = (fromPhone || '').replace(/\D/g, '');
+  const isPhoneMatch = (p?: string) => {
+    if (!p) return false;
+    const pClean = p.replace(/\D/g, '');
+    if (!pClean || !userClean) return false;
+    if (pClean === userClean) return true;
+    if (pClean.length >= 8 && userClean.length >= 8) {
+      return pClean.endsWith(userClean) || userClean.endsWith(pClean);
+    }
+    return false;
+  };
+
+  const [allInventory, allDemands] = await Promise.all([
+    Array.fromAsync(activeInventory.scan()),
+    Array.fromAsync(demandBoard.scan()),
+  ]);
+  const now = Date.now();
+
+  // 1. User is Buyer with active reserved hold(s)
+  const buyerHolds = allInventory
+    .filter((i) => isPhoneMatch(i.reservedForPhone) && i.status === 'reserved' && (!i.reservedUntil || i.reservedUntil > now))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+  // 2. User is Seller with a book reserved for a buyer
+  const sellerHold = allInventory
+    .filter((i) => isPhoneMatch(i.sellerPhone) && i.status === 'reserved' && (!i.reservedUntil || i.reservedUntil > now))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+
+  // 3. Check matched demand in DemandBoard
+  let matchedDemand: any = undefined;
+  if (buyerHolds.length === 0 && !sellerHold) {
+    matchedDemand = allDemands
+      .filter((d) => isPhoneMatch(d.userPhone) && d.status === 'matched')
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+  }
+
+  let replyMsg: string;
+  if (buyerHolds.length > 0) {
+    const sellerMap = new Map<string, typeof buyerHolds>();
+    for (const hold of buyerHolds) {
+      const list = sellerMap.get(hold.sellerPhone) || [];
+      list.push(hold);
+      sellerMap.set(hold.sellerPhone, list);
+    }
+
+    if (sellerMap.size === 1) {
+      const hold = buyerHolds[0];
+      const { display, cleanDigits } = formatPhoneNumber(hold.sellerPhone);
+      const codeLine = hold.handoverCode
+        ? (lang === 'fr' ? `🔑 *Code de vérification :* #${hold.handoverCode}` : `🔑 *Handover Verification Code:* #${hold.handoverCode}`)
+        : '';
+      replyMsg = lang === 'fr'
+        ? [
+            `🤝 Voici les coordonnées du parent vendeur pour votre livre *${hold.title}* :`,
+            '',
+            '👤 *Contact WhatsApp :*',
+            `📞 ${display}`,
+            `💬 Écrire directement : https://wa.me/${cleanDigits}`,
+            ...(codeLine ? ['', codeLine] : []),
+            '',
+            "⏳ Ce livre vous est réservé pendant 48h. Écrivez-lui directement pour organiser l'échange !",
+          ].join('\n')
+        : [
+            `🤝 Here is the seller's contact for your book *${hold.title}*:`,
+            '',
+            "👤 *Seller's WhatsApp Contact:*",
+            `📞 ${display}`,
+            `💬 Chat directly: https://wa.me/${cleanDigits}`,
+            ...(codeLine ? ['', codeLine] : []),
+            '',
+            '⏳ This book is reserved for you for 48 hours. Message them directly to arrange the handover!',
+          ].join('\n');
+    } else {
+      const sellerSections = Array.from(sellerMap.entries()).map(([sellerPhone, holds], sIdx) => {
+        const { display, cleanDigits } = formatPhoneNumber(sellerPhone);
+        const booksList = holds.map((h) => `  • *${h.title}* (Code: #${h.handoverCode})`).join('\n');
+        return [
+          `👤 *Parent ${sIdx + 1}:*`,
+          booksList,
+          `📞 ${display}`,
+          `💬 Chat: https://wa.me/${cleanDigits}`,
+        ].join('\n');
+      });
+
+      replyMsg = lang === 'fr'
+        ? [
+            `🤝 Voici les coordonnées des parents vendeurs pour vos livres réservés :`,
+            '',
+            sellerSections.join('\n\n'),
+            '',
+            "⏳ Ces livres vous sont réservés pendant 48h. Écrivez-leur directement pour organiser l'échange !",
+          ].join('\n')
+        : [
+            `🤝 Here are the seller contacts for your reserved books:`,
+            '',
+            sellerSections.join('\n\n'),
+            '',
+            '⏳ These books are reserved for you for 48 hours. Message them directly to coordinate the handover!',
+          ].join('\n');
+    }
+  } else if (sellerHold) {
+    const { display, cleanDigits } = formatPhoneNumber(sellerHold.reservedForPhone || '');
+    const codeLine = sellerHold.handoverCode
+      ? (lang === 'fr' ? `🔑 *Code de vérification :* #${sellerHold.handoverCode}` : `🔑 *Handover Verification Code:* #${sellerHold.handoverCode}`)
+      : '';
+    replyMsg = lang === 'fr'
+      ? [
+          `🤝 Voici les coordonnées du parent demandeur pour votre livre *${sellerHold.title}* :`,
+          '',
+          '👤 *Contact WhatsApp :*',
+          `📞 ${display}`,
+          `💬 Écrire directement : https://wa.me/${cleanDigits}`,
+          ...(codeLine ? ['', codeLine] : []),
+          '',
+          '🤝 Une fois le livre remis, répondez simplement *"Vendu"* pour libérer la réservation.',
+        ].join('\n')
+      : [
+          `🤝 Here is the buyer's contact for your book *${sellerHold.title}*:`,
+          '',
+          "👤 *Buyer's WhatsApp Contact:*",
+          `📞 ${display}`,
+          `💬 Chat directly: https://wa.me/${cleanDigits}`,
+          ...(codeLine ? ['', codeLine] : []),
+          '',
+          '🤝 Once handed over, reply *"Sold"* to mark the transaction complete.',
+        ].join('\n');
+  } else if (matchedDemand) {
+    const matchedItem = allInventory.find((i) => i.itemId === matchedDemand?.matchedItemId);
+    const sellerPhone = matchedItem?.sellerPhone || '';
+    const title = matchedDemand.requestedQuery || matchedItem?.title || 'Book';
+    const handoverCode = matchedDemand.handoverCode || matchedItem?.handoverCode;
+    const { display, cleanDigits } = formatPhoneNumber(sellerPhone);
+    const codeLine = handoverCode
+      ? (lang === 'fr' ? `🔑 *Code de vérification :* #${handoverCode}` : `🔑 *Handover Verification Code:* #${handoverCode}`)
+      : '';
+    replyMsg = lang === 'fr'
+      ? [
+          `🤝 Voici les coordonnées du parent vendeur pour votre livre *${title}* :`,
+          '',
+          '👤 *Contact WhatsApp :*',
+          `📞 ${display}`,
+          `💬 Écrire directement : https://wa.me/${cleanDigits}`,
+          ...(codeLine ? ['', codeLine] : []),
+          '',
+          "⏳ Ce livre vous est réservé pendant 48h. Écrivez-lui directement pour organiser l'échange !",
+        ].join('\n')
+      : [
+          `🤝 Here is the seller's contact for your book *${title}*:`,
+          '',
+          "👤 *Seller's WhatsApp Contact:*",
+          `📞 ${display}`,
+          `💬 Chat directly: https://wa.me/${cleanDigits}`,
+          ...(codeLine ? ['', codeLine] : []),
+          '',
+          '⏳ This book is reserved for you for 48 hours. Message them directly to arrange the handover!',
+        ].join('\n');
+  } else {
+    replyMsg = lang === 'fr'
+      ? 'Je n\'ai trouvé aucune réservation de livre active associée à votre numéro de téléphone. Si vous cherchez un livre, envoyez son titre (ex : "Je cherche maths 3ème") ou tapez "catalogue" pour parcourir les livres disponibles.'
+      : 'I could not find an active book reservation associated with your phone number. If you are looking for a book, send the title (e.g. "Looking for Year 8 Maths") or type "catalog" to browse available books.';
+  }
+
+  return replyMsg;
 }
 
 export interface WebhookProcessingResult {

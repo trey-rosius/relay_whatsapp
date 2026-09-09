@@ -17,6 +17,7 @@ import {
   formatDemandDisplay,
   parseParentMessageIntentsWithLLM,
   formatPhoneNumber,
+  normalizeTextForMatching,
   detectMessageLanguage,
   buildBuyerMatchMessage,
   buildSellerMatchMessage,
@@ -51,12 +52,15 @@ Categories of intent:
 6. "offer": The parent is offering/listing one or more specific books or subjects (e.g., "I have Year 6 Maths", "Selling Year 10 Physics", "J'ai un livre de chimie 3ème", "I have chemistry").
 7. "demand": The parent is looking for/requesting one or more specific books or subjects (e.g., "Looking for Year 6 Maths", "Need Year 10 Physics", "Je cherche livre de chimie 3ème", "Looking for chemistry").
 8. "confirm_handover": The parent is confirming that a book was sold, handed over, donated, or delivered to another parent, or that the exchange is complete (e.g., "sold", "vendu", "handed over", "remis au parent", "I gave the book", "got the books", "exchange done", "c'est fait", "livre remis").
+9. "parent_activity": The parent wants to see or check the status of their personal listings, sales, reserved holds, active requests, or account history (e.g., "my books", "mes livres", "my activity", "mon activité", "what did i list", "my listings", "mes annonces", "ce que j'ai mis", "my account", "mes demandes", "what did i post").
+10. "contact_inquiry": The parent is asking for the contact information, phone number, or identity of the parent they matched with for a book exchange (e.g., "which parent", "who has the book", "give me his number", "quel parent", "donne son numéro", "qui a le livre", "contact du vendeur", "what is their phone number").
+11. "other_grades": The parent wants to browse remaining or overflow classes/grades outside the primary list (e.g., "other grades", "autres classes", "more grades", "plus de classes", "other levels", "autres niveaux").
 
 User Message: "Looking for Year 10 Physics and offering Year 8 Chemistry"
 
 Rules for fields:
 - MULTI-BOOK EXTRACTION: When a parent lists multiple subjects or books (e.g. "I have year 10 and 11 books: Chemistry, Physics, Additional maths, English, French, ICT, Maths, Economics, Biology"), extract EACH individual book/subject as a separate item in the "intents" array. Apply the specified year(s) to every listed subject (e.g. "Year 10 & 11 Chemistry", "Year 10 & 11 Physics").
-- "title": MUST be a clear book title (e.g. "Books for Year 7", "Year 5 Chemistry Textbook", "Livres pour l'Année 6"). NEVER output placeholder strings like "Books for Year <N> <Subject>" or "Year N". For "offer_inquiry" / "demand_inquiry" / "confirm_handover", use "General Books".
+- "title": MUST be a clear book title (e.g. "Books for Year 7", "Year 5 Chemistry Textbook", "Livres pour l'Année 6"). NEVER output placeholder strings like "Books for Year <N> <Subject>" or "Year N". For "offer_inquiry" / "demand_inquiry" / "confirm_handover" / "parent_activity" / "contact_inquiry" / "other_grades", use "General Books".
 - "concept": MUST be in format "Year<Number><SubjectOrBooks>" (e.g. "Year7Books", "Year5Chemistry", "Year12Mathematics", "GeneralBooks"). Never output literal "<N>".
 - If no year is specified by the parent (e.g. "Looking for chemistry"), infer the closest subject or use "GeneralChemistry" / "GeneralBooks".
 
@@ -64,7 +68,7 @@ Extract all intents from the message into JSON:
 {
   "intents": [
     {
-      "intent": "offer" | "demand" | "offer_inquiry" | "demand_inquiry" | "catalog" | "demand_board" | "greeting" | "confirm_handover",
+      "intent": "offer" | "demand" | "offer_inquiry" | "demand_inquiry" | "catalog" | "demand_board" | "greeting" | "confirm_handover" | "parent_activity" | "contact_inquiry" | "other_grades",
       "lang": "en" | "fr",
       "concept": "Year7Books" | "Year5Chemistry" | "Year12Mathematics" | "GeneralBooks",
       "title": "Books for Year 7" | "Year 5 Chemistry Textbook" | "General Books",
@@ -989,7 +993,7 @@ test('detectMessageLanguage: correctly detects English for "which parent" and Fr
   assert.strictEqual(detectMessageLanguage("what's their phone number"), 'en');
   assert.strictEqual(detectMessageLanguage('who has the book'), 'en');
 
-  // French queries
+  // French queries (exact & typo-tolerant)
   assert.strictEqual(detectMessageLanguage('quel parent'), 'fr');
   assert.strictEqual(detectMessageLanguage('Quel parent ? Donne son numéro'), 'fr');
   assert.strictEqual(detectMessageLanguage("c'est qui le parent"), 'fr');
@@ -1001,13 +1005,64 @@ test('detectMessageLanguage: correctly detects English for "which parent" and Fr
   assert.strictEqual(detectMessageLanguage('mon activité'), 'fr');
   assert.strictEqual(detectMessageLanguage('mes annonces'), 'fr');
 
-  // English queries for parent activity
+  // Typo & stem tolerance in French
+  assert.strictEqual(detectMessageLanguage('mes livr'), 'fr');
+  assert.strictEqual(detectMessageLanguage('qui a le livr'), 'fr');
+  assert.strictEqual(detectMessageLanguage('donne son num'), 'fr');
+  assert.strictEqual(detectMessageLanguage('autres classes'), 'fr');
+  assert.strictEqual(detectMessageLanguage('autr class'), 'fr');
+
+  // English queries (exact & typo-tolerant)
   assert.strictEqual(detectMessageLanguage('my books'), 'en');
   assert.strictEqual(detectMessageLanguage('my activity'), 'en');
+  assert.strictEqual(detectMessageLanguage('my boks'), 'en');
+  assert.strictEqual(detectMessageLanguage('give his numb'), 'en');
+  assert.strictEqual(detectMessageLanguage('show my book'), 'en');
+  assert.strictEqual(detectMessageLanguage('other grades'), 'en');
 
   // Fallback behavior when query has no distinguishing markers
   assert.strictEqual(detectMessageLanguage('parent', 'en'), 'en');
   assert.strictEqual(detectMessageLanguage('parent', 'fr'), 'fr');
+});
+
+test('normalizeTextForMatching: correctly strips accents, lowercases and standardizes punctuation', () => {
+  assert.strictEqual(normalizeTextForMatching('Élève'), 'eleve');
+  assert.strictEqual(normalizeTextForMatching('Mon Activité'), 'mon activite');
+  assert.strictEqual(normalizeTextForMatching('Année 6ème'), 'annee 6eme');
+  assert.strictEqual(normalizeTextForMatching("C’est Français !"), "c'est francais");
+  assert.strictEqual(normalizeTextForMatching('   Livres   en   stock   '), 'livres en stock');
+});
+
+test('parseParentMessageIntentsWithLLM: resolves parent_activity, contact_inquiry, and other_grades fast-paths', async () => {
+  const activityFr = await parseParentMessageIntentsWithLLM('mes livr');
+  assert.strictEqual(activityFr.length, 1);
+  assert.strictEqual(activityFr[0].intent, 'parent_activity');
+  assert.strictEqual(activityFr[0].lang, 'fr');
+
+  const activityEn = await parseParentMessageIntentsWithLLM('my books');
+  assert.strictEqual(activityEn.length, 1);
+  assert.strictEqual(activityEn[0].intent, 'parent_activity');
+  assert.strictEqual(activityEn[0].lang, 'en');
+
+  const contactFr = await parseParentMessageIntentsWithLLM('qui a le livre');
+  assert.strictEqual(contactFr.length, 1);
+  assert.strictEqual(contactFr[0].intent, 'contact_inquiry');
+  assert.strictEqual(contactFr[0].lang, 'fr');
+
+  const contactEn = await parseParentMessageIntentsWithLLM('which parent has the book');
+  assert.strictEqual(contactEn.length, 1);
+  assert.strictEqual(contactEn[0].intent, 'contact_inquiry');
+  assert.strictEqual(contactEn[0].lang, 'en');
+
+  const otherGradesFr = await parseParentMessageIntentsWithLLM('autres classes');
+  assert.strictEqual(otherGradesFr.length, 1);
+  assert.strictEqual(otherGradesFr[0].intent, 'other_grades');
+  assert.strictEqual(otherGradesFr[0].lang, 'fr');
+
+  const otherGradesEn = await parseParentMessageIntentsWithLLM('other grades');
+  assert.strictEqual(otherGradesEn.length, 1);
+  assert.strictEqual(otherGradesEn[0].intent, 'other_grades');
+  assert.strictEqual(otherGradesEn[0].lang, 'en');
 });
 
 // ─── 13. School Year & Subject Matching (Cross-Parent Grade Matching) ─────────
