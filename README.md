@@ -256,6 +256,7 @@ npm run sandbox
 | `test/e2e.test.ts` | End-to-end integration tests: WhatsApp webhooks, 48h holds, photo batches, and matchmaking. |
 | `test/agent.unit.test.ts` | Unit tests for Strands Agent tools and Zod schema validations. |
 | `architecture_backend.drawio` | Complete system architecture and data flow diagram (editable in diagrams.net / draw.io). |
+| `blog_post.md` | In-depth engineering build story and architecture deep-dive for `builder.aws.com`. |
 | `relay_interaction_guide.md` | Comprehensive WhatsApp conversation testing guide with Cameroon curriculum examples. |
 
 ---
