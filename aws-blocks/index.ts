@@ -1066,7 +1066,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         const activeBooks = allInventory.filter(
           (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
         );
-        const lang = detectMessageLanguage(textMessage, 'en');
+        const isFrenchExplicit = /\b(?:autres?\s+classes?|autres?\s+livres?|plus\s+de\s+classes?)\b/i.test(textMessage);
+        const lang = isFrenchExplicit ? 'fr' : detectMessageLanguage(textMessage, 'en');
         const otherPayload = buildInteractiveOtherGradesPayload(activeBooks, lang);
         const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, otherPayload);
         if (!dispatchRes) {
@@ -1093,7 +1094,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         );
 
       if (isParentActivityInquiry) {
-        const lang = detectMessageLanguage(textMessage, 'en');
+        const isFrenchExplicit = /\b(?:mes\s+livres|mes\s+annonces|mon\s+activit[ée]|mes\s+demandes|mon\s+compte|qu['’]est-ce|j['’]ai|vendus?|achet[ée]s?|ajout[ée]s?|demand[ée]s?)\b/i.test(textMessage);
+        const lang = isFrenchExplicit ? 'fr' : detectMessageLanguage(textMessage, 'en');
         const summaryMsg = await buildParentActivitySummary(payload.from_phone, lang);
         await sendWhatsAppTextMessage(payload.from_phone, summaryMsg);
         const duration = Date.now() - startTime;
@@ -1808,10 +1810,10 @@ export function detectMessageLanguage(text: string, fallbackLang: 'en' | 'fr' = 
   const clean = text.toLowerCase();
 
   // Distinct English markers (never used in French queries)
-  const hasEnglishMarkers = /\b(?:which|who|what|where|give|his|her|their|phone|number|please|thanks|seller|buyer|\bthe\b)\b/i.test(clean);
+  const hasEnglishMarkers = /\b(?:which|who|what|where|give|his|her|their|phone|number|please|thanks|seller|buyer|\bthe\b|my|our|books?|listings?|demands?|requests?|have|need|want|looking|search|sold|bought|added|listed|activity|account|catalog|grade|grades)\b/i.test(clean);
 
   // Distinct French markers (never used in English queries)
-  const hasFrenchMarkers = /\b(?:quel|quelle|qui|quoi|donne|num[ée]ro|c['’]est|vendeur|demandeur|acheteur|livre|merci|bonjour|salut|son|sa|ses|\ble\b|\bla\b|\bles\b|\bdu\b|\bdes\b|\bau\b|\baux\b)\b/i.test(clean);
+  const hasFrenchMarkers = /\b(?:quel|quelle|qui|quoi|donne|num[ée]ro|c['’]est|vendeur|demandeur|acheteur|livres?|manuels?|annonces?|classes?|autres?|activit[ée]s?|compte|merci|bonjour|bonsoir|salut|mon|ma|mes|notre|nos|votre|vos|son|sa|ses|\ble\b|\bla\b|\bles\b|\bdu\b|\bdes\b|\bau\b|\baux\b|j['’]ai|je|moi|cherche|recherche|besoin|demandes?|vendus?|achet[ée]s?|ajout[ée]s?|svp|s['’]il vous pla[îi]t|catalogue|ann[ée]es?)\b/i.test(clean);
 
   if (hasEnglishMarkers && !hasFrenchMarkers) {
     return 'en';

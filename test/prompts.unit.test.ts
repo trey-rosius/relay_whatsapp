@@ -21,6 +21,10 @@ import {
   buildBuyerMatchMessage,
   buildSellerMatchMessage,
   generateLLMMessage,
+  extractSchoolYear,
+  extractSubject,
+  isMatchingItem,
+  ensureUnredactedMessage,
 } from '../aws-blocks/index.js';
 
 // Helper to compute SHA-256 digest
@@ -992,8 +996,174 @@ test('detectMessageLanguage: correctly detects English for "which parent" and Fr
   assert.strictEqual(detectMessageLanguage('donne son numéro'), 'fr');
   assert.strictEqual(detectMessageLanguage('qui a le livre'), 'fr');
   assert.strictEqual(detectMessageLanguage('contact du vendeur'), 'fr');
+  assert.strictEqual(detectMessageLanguage('mes Livres'), 'fr');
+  assert.strictEqual(detectMessageLanguage('mes livres'), 'fr');
+  assert.strictEqual(detectMessageLanguage('mon activité'), 'fr');
+  assert.strictEqual(detectMessageLanguage('mes annonces'), 'fr');
+
+  // English queries for parent activity
+  assert.strictEqual(detectMessageLanguage('my books'), 'en');
+  assert.strictEqual(detectMessageLanguage('my activity'), 'en');
 
   // Fallback behavior when query has no distinguishing markers
   assert.strictEqual(detectMessageLanguage('parent', 'en'), 'en');
   assert.strictEqual(detectMessageLanguage('parent', 'fr'), 'fr');
 });
+
+// ─── 13. School Year & Subject Matching (Cross-Parent Grade Matching) ─────────
+
+test('extractSchoolYear: accurately extracts normalized year format', () => {
+  assert.strictEqual(extractSchoolYear('Year9'), 'Year9');
+  assert.strictEqual(extractSchoolYear('', 'Year 9 books'), 'Year9');
+  assert.strictEqual(extractSchoolYear('', 'looking for year 9 book'), 'Year9');
+  assert.strictEqual(extractSchoolYear('Year9Books', 'Books for Year 9'), 'Year9');
+  assert.strictEqual(extractSchoolYear('Year9Biology', 'Year 9 Biology textbook'), 'Year9');
+  assert.strictEqual(extractSchoolYear('Year9Year9Year9Books'), 'Year9');
+  assert.strictEqual(extractSchoolYear('', 'Livres pour l\'Année 9'), 'Year9');
+  assert.strictEqual(extractSchoolYear('', 'Livres 4ème'), 'Year9');
+  assert.strictEqual(extractSchoolYear('Year10Physics', 'Year 10 Physics'), 'Year10');
+  assert.strictEqual(extractSchoolYear('GeneralBooks'), null);
+});
+
+test('extractSubject: distinguishes specific curriculum subjects from general grade requests', () => {
+  assert.strictEqual(extractSubject('Year9Biology', 'Year 9 Biology textbook'), 'Biology');
+  assert.strictEqual(extractSubject('Year9Physics', 'Physics textbook'), 'Physics');
+  assert.strictEqual(extractSubject('Year9Chemistry', 'Year 9 Chemistry'), 'Chemistry');
+  assert.strictEqual(extractSubject('Year10Mathematics', 'Year 10 Maths'), 'Mathematics');
+
+  // General requests specifying NO subject return null
+  assert.strictEqual(extractSubject('Year9Books', 'looking for year 9 book'), null);
+  assert.strictEqual(extractSubject('Year9Books', 'Books for Year 9'), null);
+  assert.strictEqual(extractSubject('Year9Year9Year9Books', 'Books for Year 9'), null);
+  assert.strictEqual(extractSubject('Year9Books', 'Livres pour l\'année 9'), null);
+  assert.strictEqual(extractSubject('GeneralBooks', 'General Textbooks'), null);
+});
+
+test('isMatchingItem: matches general year requests across all subjects and parents', () => {
+  const generalYear9Demand = {
+    concept: 'Year9Books',
+    requestedQuery: 'looking for year 9 book',
+    title: 'Looking for Year 9 book',
+  };
+
+  // 1. General demand matches any active subject for that year
+  assert.strictEqual(
+    isMatchingItem(generalYear9Demand, {
+      concept: 'Year9Biology',
+      title: 'Year 9 Biology textbook',
+    }),
+    true,
+    'General Year 9 demand must match Year 9 Biology'
+  );
+
+  assert.strictEqual(
+    isMatchingItem(generalYear9Demand, {
+      concept: 'Year9Chemistry',
+      title: 'Year 9 Chemistry',
+    }),
+    true,
+    'General Year 9 demand must match Year 9 Chemistry'
+  );
+
+  assert.strictEqual(
+    isMatchingItem(generalYear9Demand, {
+      concept: 'Year9Physics',
+      title: 'Year 9 Physics',
+    }),
+    true,
+    'General Year 9 demand must match Year 9 Physics'
+  );
+
+  // 2. General demand matches bundles for that year (even with legacy concept keys)
+  assert.strictEqual(
+    isMatchingItem(generalYear9Demand, {
+      concept: 'Year9Year9Year9Books',
+      title: 'Books for Year 9',
+    }),
+    true,
+    'General Year 9 demand must match general bundle Books for Year 9'
+  );
+
+  // 3. General demand must NEVER match books for a DIFFERENT school year
+  assert.strictEqual(
+    isMatchingItem(generalYear9Demand, {
+      concept: 'Year10Biology',
+      title: 'Year 10 Biology',
+    }),
+    false,
+    'Year 9 demand must not match Year 10'
+  );
+
+  assert.strictEqual(
+    isMatchingItem(generalYear9Demand, {
+      concept: 'Year8Chemistry',
+      title: 'Year 8 Chemistry',
+    }),
+    false,
+    'Year 9 demand must not match Year 8'
+  );
+
+  // 4. Specific subject demand matches exact subject, bundle, or science umbrella
+  const specificChemistryDemand = {
+    concept: 'Year9Chemistry',
+    requestedQuery: 'Year 9 Chemistry',
+    title: 'Year 9 Chemistry',
+  };
+
+  assert.strictEqual(
+    isMatchingItem(specificChemistryDemand, {
+      concept: 'Year9Chemistry',
+      title: 'Year 9 Chemistry textbook',
+    }),
+    true
+  );
+
+  assert.strictEqual(
+    isMatchingItem(specificChemistryDemand, {
+      concept: 'Year9Books',
+      title: 'Books for Year 9',
+    }),
+    true,
+    'Specific subject demand matches general grade bundle'
+  );
+
+  assert.strictEqual(
+    isMatchingItem(specificChemistryDemand, {
+      concept: 'Year9Biology',
+      title: 'Year 9 Biology textbook',
+    }),
+    false,
+    'Specific chemistry demand must not match biology textbook'
+  );
+});
+
+// ─── 14. Outbound Response Unredaction Safeguard ──────────────────────────────
+
+test('ensureUnredactedMessage: guarantees no response to parents contains redacted information', () => {
+  // 1. When fallback phone is provided, replaces placeholders with actual phone number
+  const msgWithRedactedPhone = 'Contact the seller directly at [PHONE_REDACTED] to arrange pickup.';
+  assert.strictEqual(
+    ensureUnredactedMessage(msgWithRedactedPhone, '+237 77 55 19 19'),
+    'Contact the seller directly at +237 77 55 19 19 to arrange pickup.'
+  );
+
+  const msgWithLegacyToken = 'Contact: +XXXXXXXX1234 (redacted)';
+  assert.strictEqual(
+    ensureUnredactedMessage(msgWithLegacyToken, '+237 77 55 19 19'),
+    'Contact: +237 77 55 19 19'
+  );
+
+  // 2. When no fallback phone is provided, strips redaction tokens cleanly
+  const msgWithVariousRedactions = 'Hello parent [PHONE_REDACTED], email [EMAIL_REDACTED], at [ADDRESS_REDACTED]!';
+  const cleaned = ensureUnredactedMessage(msgWithVariousRedactions);
+  assert.ok(!cleaned.includes('[PHONE_REDACTED]'));
+  assert.ok(!cleaned.includes('[EMAIL_REDACTED]'));
+  assert.ok(!cleaned.includes('[ADDRESS_REDACTED]'));
+  assert.ok(!cleaned.toLowerCase().includes('redacted'));
+
+  // 3. Clean messages are unaltered
+  const normalMsg = '📚 Books for Year 9 are available. Message the seller via WhatsApp!';
+  assert.strictEqual(ensureUnredactedMessage(normalMsg), normalMsg);
+});
+
+
