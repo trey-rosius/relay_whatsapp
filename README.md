@@ -2,16 +2,44 @@
 
 ### Built with Strands Agents SDK & AWS Blocks for the *Agents for Humans Hackathon*
 
-Relay is an autonomous AI agent operating in the background on WhatsApp and the web. It eliminates the friction, manual coordination, and chaos of back-to-school textbook shopping by parsing parent natural language messages & book photos, maintaining live community inventories, and autonomously matching buying parents to selling parents.
+[![Hackathon](https://img.shields.io/badge/Devpost-Agents_for_Humans-blue?style=for-the-badge&logo=devpost)](https://agentsforhumans.devpost.com/)
+[![Track](https://img.shields.io/badge/Track-Good_Neighbor_Agents-green?style=for-the-badge)](https://agentsforhumans.devpost.com/#prizes)
+[![SDK](https://img.shields.io/badge/AWS-Strands_Agents_SDK-orange?style=for-the-badge&logo=amazon-aws)](https://github.com/aws/strands-agents)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
+
+Relay is an autonomous AI agent operating quietly in the background on WhatsApp. It eliminates the chaos, manual friction, and endless group-chat spam of back-to-school textbook shopping by parsing parent messages & book cover photos, maintaining real-time community inventories, and autonomously matching buying parents to selling parents.
 
 ---
 
-## 🌟 Hackathon Track & Problem Statement
+## 🌟 The Human Story: Why Relay Was Built
 
-* **Competition:** [Agents for Humans Hackathon (Devpost)](https://agentsforhumans.devpost.com/)
-* **Target Track:** **Everyday Agents** / **Good Neighbor Agents**
-* **The Problem:** Every back-to-school season, parents spend dozens of hours hunting down curriculum books across crowded WhatsApp group chats, comparing book editions, negotiating handovers, and tracking who has what.
-* **The Agent Solution:** Instead of forcing parents to learn yet another complex app, Relay operates directly inside WhatsApp. Parents simply text what they have or need (e.g. *"I have Year 5 Maths and need Year 8 Physics"*) or upload textbook cover photos. Relay parses multi-intent messages, catalogs inventory, records wishlist demands, locks 48-hour mutual reservation holds with secure verification codes, and connects parents automatically.
+> *"My son goes to school, and like hundreds of other families, we are all part of a single school WhatsApp group. Every single year, for the first five months of the school year — August, September, October, November, December — the entire group chat is completely hijacked by textbook chatter.*
+> 
+> *Parents whose kids just finished a grade (for example, moving from Year 4 to Year 5) want to sell their old Year 4 books and hunt down Year 5 curriculum books. Meanwhile, new parents joining Year 4 are desperately searching to buy those exact books.*
+> 
+> *The problem? WhatsApp is a linear, ephemeral scroll stream. A parent posts three books for sale; within five minutes, routine chatter pushes the post completely out of view. The parent posts again. A buyer asks 'Is the Maths book still available?', but that question gets scrolled past too. Bringing a selling parent and a buying parent together is an exhausting, manual pain. Crucial school announcements, pedagogical updates, and PTA discussions are completely blocked and drowned out for months.*
+> 
+> *Relay was built to step in and fix this for good. It offloads 100% of textbook conversations out of the community group chat to a dedicated autonomous WhatsApp channel. The main school group chat is restored to its original purpose: calm, relevant school conversations. Meanwhile, Relay quietly works in the background: tracking what parents have and need, matching supply to demand, locking 48-hour reservations with verification codes, and introducing parents directly to complete the exchange."*
+
+---
+
+## 🎯 Hackathon Pitch & Alignment
+
+Relay is submitted to the **[Agents for Humans Hackathon](https://agentsforhumans.devpost.com/)** across two core tracks:
+
+* 🥇 **Primary Track: Good Neighbor Agents** — *"An agent that helps groups of people, not just one: neighborhoods, nonprofits, food banks, schools, libraries, small local orgs."*
+* 🥈 **Secondary Track: Everyday Agents** — *"An agent that takes the busywork out of daily life, home, money, errands, family. The best ones run quietly in the background and only ping you when there's a real decision to make."*
+
+### The Pitch in Three Questions:
+1. **The Problem We're Solving:** Every back-to-school season, school parent groups are inundated with chaotic, repetitive textbook sales chatter. Hundreds of book listings and requests get buried in WhatsApp's fast-scrolling feed, forcing parents to repeatedly repost, manually cross-reference curriculum editions, and negotiate handovers while drowning out essential school notices.
+2. **Who It's For:** School parent communities, PTAs, teachers, and families managing back-to-school expenses who need a frictionless way to recycle curriculum books locally without learning or downloading another app.
+3. **Why It Matters:** Textbooks represent one of the single highest recurring out-of-pocket education costs for families worldwide. By automating hyper-local second-hand exchanges directly inside WhatsApp, Relay cuts textbook costs for parents by up to 70%, keeps dozens of kilograms of paper in active circulation, and restores peace and clarity to community communication channels.
+
+### The "Agents for Humans" Philosophy: Zero New Apps
+In accordance with the hackathon's core thesis — *"Instead of another app people open and manage, the agent runs autonomously and only surfaces when there's a real decision to make"* — Relay does not force parents to download an app, create an account, or monitor a dashboard:
+* **Background Autonomous Loop:** Parents simply send a voice note, text (*"I have Year 5 Maths and need Year 8 Physics"*), or snap a textbook cover photo.
+* **Proactive Matchmaking:** Relay's Strands Agent reasons in the background, queries DynamoDB supply and demand, and autonomously detects matches without human prompting.
+* **Surfaces Only for Decisions:** Relay only pings parents when a match is found to present an interactive confirmation card, lock a 48-hour reservation, and issue a cryptographic verification code (`#XXXX`) for a safe physical handover.
 
 ---
 
@@ -127,6 +155,34 @@ Solves WhatsApp's strict 10-row list constraint:
 | **`#STATUS`** | Shows session state and count of simulated inventory/demands. |
 | **`#RESET`** | Deletes all simulated sandbox items and demands cleanly. |
 | **`#SANDBOX OFF`** | Exits sandbox and returns your phone to live production mode. |
+
+---
+
+## 🌐 Live Deployments & Hackathon Reviewer Guide
+
+### Live Cloud Endpoints
+* **Web Storefront & Parent Portal:** [https://d3cdc2mtpqk5ut.cloudfront.net](https://d3cdc2mtpqk5ut.cloudfront.net) *(Amazon CloudFront CDN + S3)*
+* **Production API Gateway:** `https://0bur1ooy7b.execute-api.us-east-1.amazonaws.com/prod/aws-blocks/api`
+* **Realtime WebSocket Gateway:** `wss://ftuliydf8c.execute-api.us-east-1.amazonaws.com/rt`
+* **WhatsApp Bot Number:** Connected via Meta Cloud API v25.0
+
+### 🧪 How Hackathon Judges Can Test Relay Live (Without Touching Production)
+Judges can test every single feature directly on WhatsApp using the built-in **Developer Sandbox**:
+1. Open WhatsApp and text **`#SANDBOX ON`** to activate your isolated session. You will receive a `🧪 [SANDBOX MODE]` confirmation.
+2. Text **`#SEED`** to load a realistic sample school catalog (15 curriculum books, 1 active 48-hour reservation with code `#7721`, and 1 wishlist demand).
+3. Test browsing: text **`catalog`** or **`other grades`** to interact with WhatsApp interactive lists.
+4. Test activity tracking: text **`my books`** (or **`mes livres`**) to see your personal dashboard.
+5. Test unmasking: text **`which parent`** to see secure phone and handover code delivery.
+6. Test natural language offers: text *"I have Year 5 Maths and need Year 8 Physics"* to experience multi-intent parsing and background matchmaking.
+7. Clean up: text **`#RESET`** to clear all mock items, followed by **`#SANDBOX OFF`** to return to live mode. Real community records remain 100% shielded and untouched.
+
+### 📋 Hackathon Submission Requirements Checklist
+- [x] **Public Code Repository:** GitHub public repository with complete source code.
+- [x] **Open Source License:** [MIT License](LICENSE) included in root.
+- [x] **Technical Implementation:** Built with Strands Agents SDK (`@aws-blocks/bb-agent`), Bedrock Nova Lite & Claude, DynamoDB, S3, and AWS Blocks.
+- [x] **Architecture Diagram:** [architecture_backend.drawio](file:///Users/ro/Documents/playground/books-block-app/architecture_backend.drawio) (diagrams.net compatible) + ASCII architecture in README.
+- [x] **Working Project Demo:** Live CloudFront web application and live WhatsApp integration.
+- [x] **Pitch & Presentation:** Covers (1) the problem, (2) who it's for, and (3) why it matters.
 
 ---
 

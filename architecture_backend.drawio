@@ -8,7 +8,7 @@
         <!-- ══════════════════════════════════════════════════════════════════ -->
         <!-- HEADER / TITLE BANNER                                              -->
         <!-- ══════════════════════════════════════════════════════════════════ -->
-        <mxCell id="title_banner" value="RELAY 📚 — Autonomous Parent School Textbook Marketplace &amp; Matchmaker&#xa;End-to-End Enterprise Architecture • Powered by Strands Agents SDK, Amazon Bedrock (Nova Lite &amp; Claude), In-Chat Developer Sandbox &amp; AWS Blocks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1E293B;strokeColor=#38BDF8;strokeWidth=2;fontColor=#F8FAFC;fontStyle=1;fontSize=17;align=center;" vertex="1" parent="1">
+        <mxCell id="title_banner" value="RELAY 📚 — Autonomous School Parent Textbook Marketplace &amp; Matchmaker&#xa;Offloading Back-to-School Chat Spam from School WhatsApp Groups • Powered by Strands Agents SDK, Amazon Bedrock &amp; AWS Blocks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1E293B;strokeColor=#38BDF8;strokeWidth=2;fontColor=#F8FAFC;fontStyle=1;fontSize=17;align=center;" vertex="1" parent="1">
           <mxGeometry x="40" y="20" width="2320" height="60" as="geometry" />
         </mxCell>
 
@@ -19,7 +19,7 @@
           <mxGeometry x="40" y="100" width="420" height="1480" as="geometry" />
         </mxCell>
 
-        <mxCell id="parent_user" value="Parent School Community&#xa;📱 WhatsApp Mobile App (+237 / +33 / Int'l)&#xa;• Natural Language Chat in English &amp; French&#xa;• Compound Dual-Intent ('Looking for Y6 &amp; Have Y5')&#xa;• Multi-Book Curriculum Batch Listings (Y10 &amp; Y11)&#xa;• Inbound Textbook Cover Photo Uploads&#xa;• 2-Tier Interactive List Browsing &amp; 2-Button Cards&#xa;• Handover Confirmations ('Sold' / 'Vendu' / 'Got it')&#xa;• Parent Activity Tracking ('my books' / 'mes livres')&#xa;• Overflow Grade Browsing ('other grades' / 'autres classes')" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#059669;strokeColor=#10B981;strokeWidth=2;fontColor=#FFFFFF;fontStyle=1;align=left;spacingLeft=15;" vertex="1" parent="layer_clients">
+        <mxCell id="parent_user" value="School Parent Community&#xa;📱 Dedicated Relay WhatsApp Channel&#xa;• Offloads 5-month book sales frenzy from noisy school group chat&#xa;• Solves ephemeral scroll-view burial of textbook listings&#xa;• Natural Language Chat in English &amp; French&#xa;• Compound Dual-Intent ('Looking for Y6 &amp; Have Y5')&#xa;• Multi-Book Curriculum Batch Listings (Y10 &amp; Y11)&#xa;• Inbound Textbook Cover Photo Uploads&#xa;• 2-Tier Interactive List Browsing &amp; 2-Button Cards&#xa;• Handover Confirmations ('Sold' / 'Vendu' / 'Got it')&#xa;• Parent Activity Tracking ('my books' / 'mes livres')&#xa;• Overflow Grade Browsing ('other grades' / 'autres classes')" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#059669;strokeColor=#10B981;strokeWidth=2;fontColor=#FFFFFF;fontStyle=1;align=left;spacingLeft=15;" vertex="1" parent="layer_clients">
           <mxGeometry x="30" y="40" width="360" height="180" as="geometry" />
         </mxCell>
 
