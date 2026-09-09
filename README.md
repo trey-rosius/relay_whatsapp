@@ -41,6 +41,22 @@ In accordance with the hackathon's core thesis — *"Instead of another app peop
 * **Proactive Matchmaking:** Relay's Strands Agent reasons in the background, queries DynamoDB supply and demand, and autonomously detects matches without human prompting.
 * **Surfaces Only for Decisions:** Relay only pings parents when a match is found to present an interactive confirmation card, lock a 48-hour reservation, and issue a cryptographic verification code (`#XXXX`) for a safe physical handover.
 
+### 💡 The Friction Trap: Why Forms, Web Portals & Mobile Apps Fail Parents
+When communities try to organize textbook exchanges, they almost always reach for conventional tools that fail because they demand extra work from already busy parents:
+
+| Approach | What Happens | Why It Fails |
+| :--- | :--- | :--- |
+| **Google Forms** | Parents are asked to fill out multiple mandatory fields per book (grade, subject, edition, condition, price). | **Too much friction.** Parents don't have time to sit down with a form. They abandon it and go right back to posting in the WhatsApp chat. |
+| **Web Portal / Storefront** | Parents are directed to a website to register an account, verify an email, log in, and fill out forms. | **Cognitive overload.** Parents are on the go. Opening a mobile browser and navigating forms feels like unpaid homework. |
+| **Dedicated Mobile App** | A native iOS or Android app is published on the app stores. | **Zero adoption.** *"Nobody's downloading no mobile app"* for a task they do once or twice a year. App fatigue is real. |
+| **Relay 📚 (WhatsApp AI Agent)** | Parents text the exact same sentence or photo they were already going to post in the group chat, but to Relay's number. | **100% Frictionless.** Zero downloads, zero logins, zero forms, zero behavior change. Relay's AI handles all categorization, cataloging, matching, and escrow holds in the background. |
+
+### 📈 Real-World Community Impact & Results
+In our live school deployment:
+* **The Main Group Chat Went Completely Quiet on Book Spam:** Five full months (August–December) of repetitive, chaotic textbook chatter was completely cleared out of the community group chat, restoring it to essential academic notices, teacher alerts, and PTA discussions.
+* **Self-Policing Community Adoption:** When an occasional parent who is new to the school asks for a book in the main group, other parents immediately redirect them: *"Don't post here — just text Relay at this phone number and it will connect you automatically!"*
+* **Real Parent Testimonials:** School parents have overwhelmingly praised how fast, painless, and respectful of their time Relay is compared to years past.
+
 ---
 
 ## 🚀 Key Features & Capabilities
