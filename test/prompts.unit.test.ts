@@ -26,6 +26,16 @@ import {
   extractSubject,
   isMatchingItem,
   ensureUnredactedMessage,
+  isSandboxSessionActive,
+  setSandboxSession,
+  isMockPhoneNumber,
+  getScopedActiveInventory,
+  getScopedDemandBoard,
+  seedSandboxData,
+  resetSandboxData,
+  getSandboxStatus,
+  buildParentActivitySummary,
+  resolveMatchedContact,
 } from '../aws-blocks/index.js';
 
 // Helper to compute SHA-256 digest
@@ -1220,5 +1230,193 @@ test('ensureUnredactedMessage: guarantees no response to parents contains redact
   const normalMsg = '📚 Books for Year 9 are available. Message the seller via WhatsApp!';
   assert.strictEqual(ensureUnredactedMessage(normalMsg), normalMsg);
 });
+
+// ─── 15. Developer In-Chat Sandbox Mode (Option 1 Tests) ─────────────────────
+
+test('sandbox session management: activates, verifies, and deactivates developer session', async () => {
+  const testPhone = '+237 677 55 19 19';
+  const cleanPhone = '237677551919';
+
+  // Initially inactive
+  await setSandboxSession(cleanPhone, false);
+  let isActive = await isSandboxSessionActive(testPhone);
+  assert.strictEqual(isActive, false, 'Sandbox session should be initially inactive');
+
+  // Activate session
+  await setSandboxSession(testPhone, true);
+  isActive = await isSandboxSessionActive(testPhone);
+  assert.strictEqual(isActive, true, 'Sandbox session should be active after enabling');
+
+  // Deactivate session
+  await setSandboxSession(testPhone, false);
+  isActive = await isSandboxSessionActive(testPhone);
+  assert.strictEqual(isActive, false, 'Sandbox session should be inactive after disabling');
+});
+
+test('sandbox phone safeguard: accurately identifies mock vs real community phone numbers', () => {
+  // Mock phone numbers (safely intercepted, never dispatched to Meta Graph API)
+  assert.strictEqual(isMockPhoneNumber('+237670000001'), true, 'Parent Marie mock number should be identified');
+  assert.strictEqual(isMockPhoneNumber('+237690000002'), true, 'Parent Paul mock number should be identified');
+  assert.strictEqual(isMockPhoneNumber('+237 670 00 00 15'), true, 'Mock number with formatting should be identified');
+  assert.strictEqual(isMockPhoneNumber('15551234567'), true, 'Meta test format 1555... should be identified');
+  assert.strictEqual(isMockPhoneNumber('+23700009999'), true, 'Cameroon prefix zero format should be identified');
+
+  // Real community numbers (allowed to receive real Meta dispatches)
+  assert.strictEqual(isMockPhoneNumber('+237677551919'), false, 'Real parent phone must not be flagged as mock');
+  assert.strictEqual(isMockPhoneNumber('+237699887766'), false, 'Real parent phone must not be flagged as mock');
+  assert.strictEqual(isMockPhoneNumber(''), false, 'Empty phone should return false');
+});
+
+test('sandbox isolation & 100% data shielding: mock catalog and demands are completely shielded from production queries', async () => {
+  const testerPhone = '+237 677 55 19 19';
+
+  // Seed rich Cameroon mock curriculum and active exchange
+  const seedResult = await seedSandboxData(testerPhone, 'en');
+  assert.strictEqual(seedResult.items, 16, 'Seed should populate 16 books (15 active + 1 reserved hold)');
+  assert.strictEqual(seedResult.demands, 2, 'Seed should populate 2 demands (1 matched hold + 1 open demand)');
+
+  // 1. PRODUCTION SCOPE GUARANTEE: Real parents NEVER see simulated records
+  const prodInventory = await getScopedActiveInventory(false);
+  const prodSimulatedItems = prodInventory.filter((item) => item.isSimulated === true);
+  assert.strictEqual(
+    prodSimulatedItems.length,
+    0,
+    'CRITICAL: Production inventory must contain ZERO simulated items!'
+  );
+
+  const prodDemands = await getScopedDemandBoard(false);
+  const prodSimulatedDemands = prodDemands.filter((demand) => demand.isSimulated === true);
+  assert.strictEqual(
+    prodSimulatedDemands.length,
+    0,
+    'CRITICAL: Production demand board must contain ZERO simulated demands!'
+  );
+
+  // 2. SANDBOX SCOPE GUARANTEE: Developer sees full simulated environment
+  const sandboxInventory = await getScopedActiveInventory(true);
+  assert.strictEqual(sandboxInventory.length, 16, 'Sandbox must see all 16 simulated items');
+  for (const item of sandboxInventory) {
+    assert.strictEqual(item.isSimulated, true, 'Every sandbox item must have isSimulated: true');
+  }
+
+  const sandboxDemands = await getScopedDemandBoard(true);
+  assert.strictEqual(sandboxDemands.length, 2, 'Sandbox must see both simulated demands');
+  for (const demand of sandboxDemands) {
+    assert.strictEqual(demand.isSimulated, true, 'Every sandbox demand must have isSimulated: true');
+  }
+});
+
+test('sandbox activity summary: shows isolated reserved hold with handover code #7721 only in sandbox', async () => {
+  const testerPhone = '+237 677 55 19 19';
+
+  // Ensure sandbox data is seeded
+  await seedSandboxData(testerPhone, 'en');
+
+  // In Sandbox mode, parent sees the simulated hold with Parent Marie and handover code 7721
+  const sandboxSummary = await buildParentActivitySummary(testerPhone, 'en', true);
+  assert.ok(
+    sandboxSummary.includes('Year 10 Modern Chemistry') || sandboxSummary.includes('Year 10'),
+    'Sandbox summary should show reserved Year 10 Chemistry'
+  );
+  assert.ok(
+    sandboxSummary.includes('7721'),
+    'Sandbox summary should show handover code 7721'
+  );
+  assert.ok(
+    sandboxSummary.includes('Parent Marie') || sandboxSummary.includes('+237 670 000 001') || sandboxSummary.includes('237670000001'),
+    'Sandbox summary should show seller Parent Marie'
+  );
+
+  // In Production mode (isSandbox = false), mock hold must NEVER leak into real user activity
+  const prodSummary = await buildParentActivitySummary(testerPhone, 'en', false);
+  assert.ok(
+    !prodSummary.includes('7721'),
+    'CRITICAL: Production summary must NEVER leak simulated handover code 7721'
+  );
+  assert.ok(
+    !prodSummary.includes('Parent Marie'),
+    'CRITICAL: Production summary must NEVER leak simulated seller Parent Marie'
+  );
+});
+
+test('sandbox contact resolution: returns mock seller Parent Marie and handover code in sandbox, shielded from production', async () => {
+  const testerPhone = '+237 677 55 19 19';
+
+  await seedSandboxData(testerPhone, 'en');
+
+  // In Sandbox mode: resolves to Parent Marie
+  const sandboxContact = await resolveMatchedContact(testerPhone, 'en', true);
+  assert.ok(
+    sandboxContact.includes('Parent Marie') || sandboxContact.includes('237670000001'),
+    'Sandbox contact inquiry must return Parent Marie (+237 670 000 001)'
+  );
+  assert.ok(
+    sandboxContact.includes('7721'),
+    'Sandbox contact inquiry must provide handover code 7721'
+  );
+
+  // In Production mode: no simulated match is returned
+  const prodContact = await resolveMatchedContact(testerPhone, 'en', false);
+  assert.ok(
+    !prodContact.includes('Parent Marie'),
+    'CRITICAL: Production contact inquiry must never return simulated seller'
+  );
+  assert.ok(
+    !prodContact.includes('7721'),
+    'CRITICAL: Production contact inquiry must never return simulated handover code'
+  );
+});
+
+test('sandbox reset: clears all simulated items and leaves real inventory 100% intact', async () => {
+  const testerPhone = '+237 677 55 19 19';
+
+  // Seed first
+  await seedSandboxData(testerPhone, 'en');
+  let simInventory = await getScopedActiveInventory(true);
+  assert.ok(simInventory.length > 0, 'Should have simulated items before reset');
+
+  // Reset sandbox data
+  const resetResult = await resetSandboxData(testerPhone);
+  assert.ok(resetResult.items > 0, 'Reset should report deleted simulated items');
+  assert.ok(resetResult.demands > 0, 'Reset should report deleted simulated demands');
+
+  // Verify zero simulated items remain
+  simInventory = await getScopedActiveInventory(true);
+  assert.strictEqual(simInventory.length, 0, 'All simulated inventory must be deleted after reset');
+
+  const simDemands = await getScopedDemandBoard(true);
+  assert.strictEqual(simDemands.length, 0, 'All simulated demands must be deleted after reset');
+});
+
+test('sandbox status helper: accurately reports active status and simulated counts', async () => {
+  const testerPhone = '+237 677 55 19 19';
+
+  // 1. Initially inactive with 0 items
+  await resetSandboxData(testerPhone);
+  await setSandboxSession(testerPhone, false);
+  let status = await getSandboxStatus(testerPhone);
+  assert.strictEqual(status.active, false);
+  assert.strictEqual(status.simulatedInventoryCount, 0);
+  assert.strictEqual(status.simulatedDemandCount, 0);
+
+  // 2. Activate and Seed
+  await setSandboxSession(testerPhone, true);
+  await seedSandboxData(testerPhone, 'en');
+
+  status = await getSandboxStatus(testerPhone);
+  assert.strictEqual(status.active, true);
+  assert.strictEqual(status.simulatedInventoryCount, 16);
+  assert.strictEqual(status.simulatedDemandCount, 2);
+
+  // 3. Reset and Deactivate
+  await resetSandboxData(testerPhone);
+  await setSandboxSession(testerPhone, false);
+
+  status = await getSandboxStatus(testerPhone);
+  assert.strictEqual(status.active, false);
+  assert.strictEqual(status.simulatedInventoryCount, 0);
+  assert.strictEqual(status.simulatedDemandCount, 0);
+});
+
 
 

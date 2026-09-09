@@ -25,6 +25,7 @@ import {
   Agent,
   BedrockModels,
   CronJob,
+  KVStore,
 } from '@aws-blocks/blocks';
 import { z } from 'zod';
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
@@ -420,13 +421,14 @@ export const activeInventorySchema = z.object({
   description: z.string(),
   sellerPhone: z.string(),
   status: z.enum(['active', 'sold', 'reserved']),
-  preferredLang: z.enum(['en', 'fr']).optional().default('en'),
+  preferredLang: z.enum(['en', 'fr']).optional(),
   reservedUntil: z.number().optional(),
   reservedForPhone: z.string().optional(),
   matchedDemandId: z.string().optional(),
   soldAt: z.number().optional(),
   soldToPhone: z.string().optional(),
   handoverCode: z.string().optional(),
+  isSimulated: z.boolean().optional(),
   createdAt: z.number(),
 });
 
@@ -447,10 +449,11 @@ export const demandBoardSchema = z.object({
   concept: z.string(),
   domain: z.string(),
   status: z.enum(['pending', 'matched', 'fulfilled', 'cancelled']),
-  preferredLang: z.enum(['en', 'fr']).optional().default('en'),
+  preferredLang: z.enum(['en', 'fr']).optional(),
   matchedItemId: z.string().optional(),
   matchedAt: z.number().optional(),
   handoverCode: z.string().optional(),
+  isSimulated: z.boolean().optional(),
   createdAt: z.number(),
 });
 
@@ -463,6 +466,432 @@ export const demandBoard = new DistributedTable(scope, 'demand-board', {
     byConcept: { partitionKey: 'concept', sortKey: 'createdAt' },
   },
 });
+
+// ─── Developer In-Chat Sandbox Mode (Isolated Simulation State) ──────────────
+
+export const sandboxSessionSchema = z.object({
+  active: z.boolean(),
+  activatedAt: z.number(),
+});
+
+export type SandboxSession = z.infer<typeof sandboxSessionSchema>;
+
+export const sandboxSessions = new KVStore(scope, 'sandbox-sessions', {
+  schema: sandboxSessionSchema,
+});
+
+const inMemorySandboxSessions = new Map<string, boolean>();
+
+/**
+ * Checks if a specific phone number has an active In-Chat Sandbox session.
+ */
+export async function isSandboxSessionActive(phone: string): Promise<boolean> {
+  const clean = (phone || '').replace(/\D/g, '');
+  if (!clean) return false;
+  if (inMemorySandboxSessions.has(clean)) {
+    return inMemorySandboxSessions.get(clean) === true;
+  }
+  try {
+    const session = await sandboxSessions.get(clean);
+    const active = session?.active === true;
+    inMemorySandboxSessions.set(clean, active);
+    return active;
+  } catch {
+    return inMemorySandboxSessions.get(clean) === true;
+  }
+}
+
+/**
+ * Toggles In-Chat Sandbox session state for a specific phone number.
+ */
+export async function setSandboxSession(phone: string, active: boolean): Promise<void> {
+  const clean = (phone || '').replace(/\D/g, '');
+  if (!clean) return;
+  inMemorySandboxSessions.set(clean, active);
+  try {
+    if (active) {
+      await sandboxSessions.put(clean, { active: true, activatedAt: Date.now() });
+    } else {
+      await sandboxSessions.delete(clean);
+    }
+  } catch (err) {
+    console.warn('[SandboxSessions] KVStore write fallback:', (err as Error).message);
+  }
+}
+
+/**
+ * Distinguishes mock/test phone numbers so outbound notifications are not dispatched to Meta Graph API.
+ */
+export function isMockPhoneNumber(phone?: string): boolean {
+  if (!phone) return false;
+  const clean = phone.replace(/\D/g, '');
+  return (
+    clean.startsWith('237670000') ||
+    clean.startsWith('237690000') ||
+    clean.startsWith('1555') ||
+    clean.startsWith('2370000')
+  );
+}
+
+/**
+ * Returns active inventory scoped to the caller's session.
+ * When isSandbox is false, GUARANTEES 100% data shielding: real parents NEVER see mock records.
+ * When isSandbox is true, returns ONLY simulated records.
+ */
+export async function getScopedActiveInventory(isSandbox: boolean): Promise<ActiveInventoryItem[]> {
+  const all = await Array.fromAsync(activeInventory.scan());
+  if (isSandbox) {
+    return all.filter((i) => i.isSimulated === true);
+  }
+  return all.filter((i) => !i.isSimulated);
+}
+
+/**
+ * Returns demand board entries scoped to the caller's session.
+ * When isSandbox is false, GUARANTEES 100% data shielding: real parents NEVER see mock demands.
+ * When isSandbox is true, returns ONLY simulated demands.
+ */
+export async function getScopedDemandBoard(isSandbox: boolean): Promise<DemandItem[]> {
+  const all = await Array.fromAsync(demandBoard.scan());
+  if (isSandbox) {
+    return all.filter((d) => d.isSimulated === true);
+  }
+  return all.filter((d) => !d.isSimulated);
+}
+
+/**
+ * Populates a rich mock Cameroon curriculum catalog (15 textbooks across Primary, Middle & High School),
+ * 1 active 48h reserved exchange with handover verification code, and 1 community demand on the wishlist.
+ */
+export async function seedSandboxData(
+  senderPhone: string,
+  lang: 'en' | 'fr' = 'en'
+): Promise<{ items: number; demands: number }> {
+  // Clear any existing simulated data first to guarantee an isolated, deterministic state
+  await resetSandboxData(senderPhone);
+
+  const now = Date.now();
+  const mockItems: ActiveInventoryItem[] = [
+    {
+      itemId: `sim_book_1_${now}`,
+      title: 'Year 7 Mathematics',
+      concept: 'Year7Mathematics',
+      domain: 'Mathematics',
+      providerCategory: 'MiddleSchool',
+      conditionType: 'LikeNew',
+      description: 'Standard Year 7 Cameroon curriculum math textbook in like-new condition.',
+      sellerPhone: '+237670000002',
+      status: 'active',
+      preferredLang: 'en',
+      isSimulated: true,
+      createdAt: now - 3600000 * 5,
+    },
+    {
+      itemId: `sim_book_2_${now}`,
+      title: 'Year 8 Integrated Science',
+      concept: 'Year8Science',
+      domain: 'Science',
+      providerCategory: 'MiddleSchool',
+      conditionType: 'Good',
+      description: 'Comprehensive science textbook covering biology and physics with exercises.',
+      sellerPhone: '+237670000003',
+      status: 'active',
+      preferredLang: 'en',
+      isSimulated: true,
+      createdAt: now - 3600000 * 4,
+    },
+    {
+      itemId: `sim_book_3_${now}`,
+      title: 'Year 9 Biology - Cameroon Curriculum',
+      concept: 'Year9Biology',
+      domain: 'Science',
+      providerCategory: 'MiddleSchool',
+      conditionType: 'Good',
+      description: 'Form 3 biology textbook with clear diagrams and past questions.',
+      sellerPhone: '+237670000004',
+      status: 'active',
+      preferredLang: 'en',
+      isSimulated: true,
+      createdAt: now - 3600000 * 3,
+    },
+    {
+      itemId: `sim_book_4_${now}`,
+      title: 'Year 10 Physics',
+      concept: 'Year10Physics',
+      domain: 'Science',
+      providerCategory: 'HighSchool',
+      conditionType: 'LikeNew',
+      description: 'GCE O-Level Physics handbook for Year 10 students.',
+      sellerPhone: '+237670000005',
+      status: 'active',
+      preferredLang: 'en',
+      isSimulated: true,
+      createdAt: now - 3600000 * 2,
+    },
+    {
+      itemId: `sim_book_5_${now}`,
+      title: 'Year 11 Chemistry',
+      concept: 'Year11Chemistry',
+      domain: 'Science',
+      providerCategory: 'HighSchool',
+      conditionType: 'New',
+      description: 'Form 5 GCE O-Level chemistry text in pristine condition.',
+      sellerPhone: '+237670000006',
+      status: 'active',
+      preferredLang: 'en',
+      isSimulated: true,
+      createdAt: now - 3600000,
+    },
+    {
+      itemId: `sim_book_6_${now}`,
+      title: 'Year 12 English Literature',
+      concept: 'Year12Literature',
+      domain: 'Languages',
+      providerCategory: 'HighSchool',
+      conditionType: 'Good',
+      description: 'Lower 6th set books, Shakespeare drama and poetry anthologies.',
+      sellerPhone: '+237670000007',
+      status: 'active',
+      preferredLang: 'en',
+      isSimulated: true,
+      createdAt: now - 1800000,
+    },
+    {
+      itemId: `sim_book_7_${now}`,
+      title: 'Year 13 Pure Mathematics',
+      concept: 'Year13Mathematics',
+      domain: 'Mathematics',
+      providerCategory: 'UniversityPrep',
+      conditionType: 'LikeNew',
+      description: 'Upper 6th GCE A-Level Pure Mathematics with Mechanics and Statistics.',
+      sellerPhone: '+237670000008',
+      status: 'active',
+      preferredLang: 'en',
+      isSimulated: true,
+      createdAt: now - 900000,
+    },
+    {
+      itemId: `sim_book_8_${now}`,
+      title: '6ème Mon Livre de Français',
+      concept: '6emeFrancais',
+      domain: 'Languages',
+      providerCategory: 'MiddleSchool',
+      conditionType: 'Good',
+      description: 'Manuel officiel de français pour la classe de 6ème au Cameroun.',
+      sellerPhone: '+237670000009',
+      status: 'active',
+      preferredLang: 'fr',
+      isSimulated: true,
+      createdAt: now - 3600000 * 6,
+    },
+    {
+      itemId: `sim_book_9_${now}`,
+      title: '5ème Mathématiques - Collection CIAM',
+      concept: '5emeMathematiques',
+      domain: 'Mathematics',
+      providerCategory: 'MiddleSchool',
+      conditionType: 'LikeNew',
+      description: 'Livre de mathématiques CIAM 5ème avec exercices résolus.',
+      sellerPhone: '+237670000010',
+      status: 'active',
+      preferredLang: 'fr',
+      isSimulated: true,
+      createdAt: now - 3600000 * 5,
+    },
+    {
+      itemId: `sim_book_10_${now}`,
+      title: "4ème Sciences d'Observation",
+      concept: '4emeScience',
+      domain: 'Science',
+      providerCategory: 'MiddleSchool',
+      conditionType: 'Acceptable',
+      description: 'Sciences de la vie et de la terre pour classe de 4ème.',
+      sellerPhone: '+237670000011',
+      status: 'active',
+      preferredLang: 'fr',
+      isSimulated: true,
+      createdAt: now - 3600000 * 4,
+    },
+    {
+      itemId: `sim_book_11_${now}`,
+      title: '3ème Chimie et Physique',
+      concept: '3emeChimie',
+      domain: 'Science',
+      providerCategory: 'MiddleSchool',
+      conditionType: 'Good',
+      description: 'Préparation BEPC Cameroun physique chimie et technologie.',
+      sellerPhone: '+237670000012',
+      status: 'active',
+      preferredLang: 'fr',
+      isSimulated: true,
+      createdAt: now - 3600000 * 3,
+    },
+    {
+      itemId: `sim_book_12_${now}`,
+      title: '2nde Histoire et Géographie',
+      concept: '2ndeHistoire',
+      domain: 'Humanities',
+      providerCategory: 'HighSchool',
+      conditionType: 'Good',
+      description: 'Programme officiel de Seconde, Afrique et monde contemporain.',
+      sellerPhone: '+237670000013',
+      status: 'active',
+      preferredLang: 'fr',
+      isSimulated: true,
+      createdAt: now - 3600000 * 2,
+    },
+    {
+      itemId: `sim_book_13_${now}`,
+      title: 'Première D Sciences de la Vie et de la Terre',
+      concept: 'PremiereSVT',
+      domain: 'Science',
+      providerCategory: 'HighSchool',
+      conditionType: 'LikeNew',
+      description: 'Manuel SVT Première D conforme aux programmes nationaux.',
+      sellerPhone: '+237670000014',
+      status: 'active',
+      preferredLang: 'fr',
+      isSimulated: true,
+      createdAt: now - 3600000,
+    },
+    {
+      itemId: `sim_book_14_${now}`,
+      title: 'Terminale C Mathématiques CIAM',
+      concept: 'TerminaleMathematiques',
+      domain: 'Mathematics',
+      providerCategory: 'HighSchool',
+      conditionType: 'New',
+      description: 'Manuel complet CIAM Terminale C et E avec annales du baccalauréat.',
+      sellerPhone: '+237670000015',
+      status: 'active',
+      preferredLang: 'fr',
+      isSimulated: true,
+      createdAt: now - 1800000,
+    },
+    {
+      itemId: `sim_book_15_${now}`,
+      title: 'Class 6 Primary English & Quantitative Reasoning',
+      concept: 'Class6English',
+      domain: 'Languages',
+      providerCategory: 'PrimarySchool',
+      conditionType: 'Good',
+      description: 'Cameroon Primary Common Entrance and FSLC exam preparation guide.',
+      sellerPhone: '+237670000016',
+      status: 'active',
+      preferredLang: 'en',
+      isSimulated: true,
+      createdAt: now - 900000,
+    },
+  ];
+
+  // 1 Active 48h Reserved Exchange (simulated hold for the tester)
+  const reservedItemId = `sim_book_reserved_${now}`;
+  const reservedDemandId = `sim_demand_matched_${now}`;
+  const reservedHoldItem: ActiveInventoryItem = {
+    itemId: reservedItemId,
+    title: 'Year 10 Modern Chemistry',
+    concept: 'Year10Chemistry',
+    domain: 'Science',
+    providerCategory: 'HighSchool',
+    conditionType: 'LikeNew',
+    description: 'Reserved test book held for handover simulation.',
+    sellerPhone: '+237670000001', // Parent Marie
+    status: 'reserved',
+    reservedUntil: now + 48 * 3600 * 1000,
+    reservedForPhone: senderPhone,
+    matchedDemandId: reservedDemandId,
+    handoverCode: '7721',
+    preferredLang: lang,
+    isSimulated: true,
+    createdAt: now - 3600000,
+  };
+
+  const reservedDemand: DemandItem = {
+    demandId: reservedDemandId,
+    userPhone: senderPhone,
+    requestedQuery: 'Year 10 Chemistry',
+    concept: 'Year10Chemistry',
+    domain: 'Science',
+    status: 'matched',
+    matchedItemId: reservedItemId,
+    matchedAt: now - 3600000,
+    handoverCode: '7721',
+    preferredLang: lang,
+    isSimulated: true,
+    createdAt: now - 7200000,
+  };
+
+  // 1 Open Community Demand waiting on the wishlist
+  const pendingDemandId = `sim_demand_pending_${now}`;
+  const pendingDemand: DemandItem = {
+    demandId: pendingDemandId,
+    userPhone: '+237690000002', // Parent Paul
+    requestedQuery: 'Terminale C Physique',
+    concept: 'TerminalePhysique',
+    domain: 'Science',
+    status: 'pending',
+    preferredLang: 'fr',
+    isSimulated: true,
+    createdAt: now - 1800000,
+  };
+
+  // Insert items into activeInventory and demandBoard
+  for (const item of [...mockItems, reservedHoldItem]) {
+    await activeInventory.put(item);
+  }
+
+  await demandBoard.put(reservedDemand);
+  await demandBoard.put(pendingDemand);
+
+  return { items: mockItems.length + 1, demands: 2 };
+}
+
+/**
+ * Resets and deletes all simulated sandbox items and demands, leaving real community data 100% untouched.
+ */
+export async function resetSandboxData(
+  senderPhone?: string
+): Promise<{ items: number; demands: number }> {
+  const [allInventory, allDemands] = await Promise.all([
+    Array.fromAsync(activeInventory.scan()),
+    Array.fromAsync(demandBoard.scan()),
+  ]);
+
+  const simItems = allInventory.filter((i) => i.isSimulated === true);
+  const simDemands = allDemands.filter((d) => d.isSimulated === true);
+
+  for (const item of simItems) {
+    await activeInventory.delete({ itemId: item.itemId });
+  }
+
+  for (const demand of simDemands) {
+    await demandBoard.delete({ demandId: demand.demandId });
+  }
+
+  return { items: simItems.length, demands: simDemands.length };
+}
+
+/**
+ * Retrieves the current sandbox session state and simulated item/demand counts for a phone number.
+ */
+export async function getSandboxStatus(phone: string): Promise<{
+  phone: string;
+  active: boolean;
+  simulatedInventoryCount: number;
+  simulatedDemandCount: number;
+}> {
+  const active = await isSandboxSessionActive(phone);
+  const [simInventory, simDemands] = await Promise.all([
+    getScopedActiveInventory(true),
+    getScopedDemandBoard(true),
+  ]);
+  return {
+    phone,
+    active,
+    simulatedInventoryCount: simInventory.length,
+    simulatedDemandCount: simDemands.length,
+  };
+}
 
 // ─── 2. S3 Vector Storage & 30-Day Image Lifecycle Bucket ─────────────────────
 
@@ -708,6 +1137,80 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         });
       });
 
+      // ─── Developer Sandbox Session Resolution & Safe Dispatch Wrappers ────────
+      const isSandbox = await isSandboxSessionActive(payload.from_phone);
+      rootSegment.addAnnotation('isSandboxMode', isSandbox);
+
+      const dispatchTextMessage = async (toPhone: string, text: string) => {
+        if (isSandbox && toPhone !== payload.from_phone && isMockPhoneNumber(toPhone)) {
+          console.log(`[SandboxMockDispatch] Intercepting dispatch to mock recipient ${toPhone}`);
+          return { messaging_product: 'whatsapp', contacts: [{ wa_id: toPhone }], messages: [{ id: `wamid.sim_${Date.now()}` }] };
+        }
+        const body = isSandbox && toPhone === payload.from_phone && !text.startsWith('🧪')
+          ? `🧪 [SANDBOX MODE]\n\n${text}`
+          : text;
+        return await sendWhatsAppTextMessage(toPhone, body);
+      };
+
+      const dispatchInteractiveMessage = async (toPhone: string, interactive: WhatsAppInteractivePayload) => {
+        if (isSandbox && toPhone === payload.from_phone && interactive.body?.text && !interactive.body.text.startsWith('🧪')) {
+          interactive.body.text = `🧪 [SANDBOX MODE]\n${interactive.body.text}`;
+        }
+        return await sendWhatsAppInteractiveMessage(toPhone, interactive);
+      };
+
+      const rawText = (payload.message_text || '').trim();
+      const detectedLang = detectMessageLanguage(rawText, 'en');
+
+      // ─── Developer In-Chat Sandbox Mode Fast-Path ───────────────────────────
+      if (/^#(?:sandbox(?:\s+on|\s+start)?|testmode(?:\s+on|\s+start)?)$/i.test(rawText)) {
+        await setSandboxSession(payload.from_phone, true);
+        const reply = detectedLang === 'fr'
+          ? `🧪 *[MODE SANDBOX ACTIVÉ]*\n\nVous êtes maintenant dans un environnement de test isolé. Vos actions ne touchent pas les vrais parents.\n\n*Commandes :*\n• *#SEED* : Générer 15 manuels (classes camerounaises), 1 échange réservé avec code, et 1 demande.\n• *#RESET* : Effacer toutes les données simulées.\n• *#STATUS* : Vérifier l'état de votre session.\n• *#SANDBOX OFF* : Revenir au mode réel de production.\n\n*Exemples de tests :*\n- Tapez *"catalogue"* pour explorer les livres simulés\n- Tapez *"mes livres"* pour voir votre échange réservé\n- Tapez *"donne son numéro"* pour tester le contact vendeur\n- Tapez *"J'ai Terminale C Physique"* pour tester une mise en relation immédiate !`
+          : `🧪 *[SANDBOX MODE ACTIVATED]*\n\nYou are now in an isolated developer sandbox session! Real parents and live inventory are completely shielded.\n\n*Available Commands:*\n• *#SEED* : Generate 15 Cameroon curriculum textbooks, 1 active reserved exchange with handover code, and 1 community demand.\n• *#RESET* : Clear all simulated books and demands.\n• *#STATUS* : Check simulated inventory count and session state.\n• *#SANDBOX OFF* : Return to live production mode.\n\n*Test Ideas:*\n- Type *"catalog"* to browse simulated books\n- Type *"my books"* to view your reserved hold\n- Type *"give me his number"* to test contact retrieval\n- Type *"I have Terminale C Physique"* to trigger instant community matching!`;
+
+        await sendWhatsAppTextMessage(payload.from_phone, `🧪 [SANDBOX MODE]\n\n${reply}`);
+        return { status: 'processed', replyMessage: reply, extractedIntentsCount: 1, vectorChunksCount: 0 };
+      }
+
+      if (/^#(?:sandbox\s+off|sandbox\s+stop|testmode\s+off|testmode\s+stop)$/i.test(rawText)) {
+        await setSandboxSession(payload.from_phone, false);
+        const reply = detectedLang === 'fr'
+          ? `✅ *[MODE SANDBOX DÉSACTIVÉ]*\n\nVous êtes revenu en mode production réel. Les données de la communauté sont maintenant actives.`
+          : `✅ *[SANDBOX MODE DEACTIVATED]*\n\nYou have returned to live production mode. Real community data is now active.`;
+        await sendWhatsAppTextMessage(payload.from_phone, reply);
+        return { status: 'processed', replyMessage: reply, extractedIntentsCount: 1, vectorChunksCount: 0 };
+      }
+
+      if (/^#seed$/i.test(rawText)) {
+        if (!isSandbox) await setSandboxSession(payload.from_phone, true);
+        await seedSandboxData(payload.from_phone, detectedLang);
+        const reply = detectedLang === 'fr'
+          ? `🧪 *[CATALOGUE SIMULÉ GÉNÉRÉ]*\n\n✅ 15 manuels scolaires (primaire, collège, lycée) ajoutés.\n✅ 1 échange réservé avec Parent Marie (+237 670 000 001) [Code: #7721].\n✅ 1 demande communautaire en attente : *Terminale C Physique*.\n\nVous pouvez maintenant tester *"mes livres"*, *"qui a le livre"*, *"catalogue"*, ou *"vendu"* !`
+          : `🧪 *[SIMULATED CATALOG SEEDED]*\n\n✅ 15 textbooks (Primary, Middle & High School) populated.\n✅ 1 active 48h reserved book with Parent Marie (+237 670 000 001) [Code: #7721].\n✅ 1 community demand waiting: *Terminale C Physique*.\n\nYou can now test *"my books"*, *"who has the book"*, *"catalog"*, or *"sold"*!`;
+        await sendWhatsAppTextMessage(payload.from_phone, `🧪 [SANDBOX MODE]\n\n${reply}`);
+        return { status: 'processed', replyMessage: reply, extractedIntentsCount: 1, vectorChunksCount: 0 };
+      }
+
+      if (/^#reset$/i.test(rawText)) {
+        const deletedCount = await resetSandboxData(payload.from_phone);
+        const reply = detectedLang === 'fr'
+          ? `🧹 *[SANDBOX RÉINITIALISÉE]*\n\nToutes les données de simulation (${deletedCount.items} livres, ${deletedCount.demands} demandes) ont été supprimées.`
+          : `🧹 *[SANDBOX RESET]*\n\nAll simulated data (${deletedCount.items} books, ${deletedCount.demands} demands) have been removed.`;
+        await sendWhatsAppTextMessage(payload.from_phone, `🧪 [SANDBOX MODE]\n\n${reply}`);
+        return { status: 'processed', replyMessage: reply, extractedIntentsCount: 1, vectorChunksCount: 0 };
+      }
+
+      if (/^#(?:status|sandbox\s+status)$/i.test(rawText)) {
+        const simItems = await getScopedActiveInventory(true);
+        const simDemands = await getScopedDemandBoard(true);
+        const reply = detectedLang === 'fr'
+          ? `🧪 *[ÉTAT DE LA SANDBOX]*\n\n• Session : ${isSandbox ? '🟢 ACTIVE (Isolée)' : '⚪ INACTIVE (Production réelle)'}\n• Livres simulés : ${simItems.length}\n• Demandes simulées : ${simDemands.length}\n• Données réelles : 🛡️ 100% Protégées`
+          : `🧪 *[SANDBOX STATUS]*\n\n• Session: ${isSandbox ? '🟢 ACTIVE (Isolated)' : '⚪ INACTIVE (Live Production)'}\n• Simulated Books: ${simItems.length}\n• Simulated Demands: ${simDemands.length}\n• Real Community Data: 🛡️ 100% Shielded`;
+        await sendWhatsAppTextMessage(payload.from_phone, `🧪 [SANDBOX MODE]\n\n${reply}`);
+        return { status: 'processed', replyMessage: reply, extractedIntentsCount: 1, vectorChunksCount: 0 };
+      }
+
       // Step 0: Check for Interactive List / Button Selection Fast-Path
       if (payload.interactive?.id) {
         const interactiveId = payload.interactive.id;
@@ -716,7 +1219,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         // 1. Browsing a specific year/grade
         if (interactiveId.startsWith('browse_year_')) {
           const yearTarget = interactiveId.replace('browse_year_', '');
-          const allInventory = await Array.fromAsync(activeInventory.scan());
+          const allInventory = await getScopedActiveInventory(isSandbox);
           const now = Date.now();
           const activeBooks = allInventory.filter(
             (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
@@ -727,7 +1230,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
           if (yearTarget.toLowerCase() === 'other' || yearTarget.toLowerCase() === 'autre') {
             const otherPayload = buildInteractiveOtherGradesPayload(activeBooks, lang);
-            const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, otherPayload);
+            const dispatchRes = await dispatchInteractiveMessage(payload.from_phone, otherPayload);
 
             if (!dispatchRes) {
               const yearGroups: Record<string, { yearNum: number }> = {};
@@ -746,7 +1249,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                 return remainingYears.includes(yLabel);
               });
               const yearText = buildGroupedCatalogText(filtered.length > 0 ? filtered : activeBooks, lang);
-              await sendWhatsAppTextMessage(payload.from_phone, yearText);
+              await dispatchTextMessage(payload.from_phone, yearText);
             }
 
             const replyText = lang === 'fr' ? 'Catalogue envoyé pour Autres Classes' : 'Catalog sent for Other Grades';
@@ -762,7 +1265,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
           }
 
           const yearPayload = buildInteractiveYearSubjectsPayload(yearTarget, activeBooks, lang);
-          const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, yearPayload);
+          const dispatchRes = await dispatchInteractiveMessage(payload.from_phone, yearPayload);
 
           if (!dispatchRes) {
             const targetNumMatch = yearTarget.match(/\d{1,2}/);
@@ -774,7 +1277,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
               return (b.title || '').toLowerCase().includes(yearTarget.toLowerCase()) || (b.concept || '').toLowerCase().includes(yearTarget.toLowerCase());
             });
             const yearText = buildGroupedCatalogText(filtered.length > 0 ? filtered : activeBooks, lang);
-            await sendWhatsAppTextMessage(payload.from_phone, yearText);
+            await dispatchTextMessage(payload.from_phone, yearText);
           }
 
           const replyText = lang === 'fr' ? `Catalogue envoyé pour ${yearTarget}` : `Catalog sent for ${yearTarget}`;
@@ -791,7 +1294,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
         // 2. Main catalog request from button/interactive
         if (interactiveId === 'show_catalog' || interactiveId === 'browse_catalog') {
-          const allInventory = await Array.fromAsync(activeInventory.scan());
+          const allInventory = await getScopedActiveInventory(isSandbox);
           const now = Date.now();
           const activeBooks = allInventory.filter(
             (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
@@ -802,12 +1305,12 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
           if (activeBooks.length === 0) {
             const emptyMsg = await generateLLMMessage('catalog_empty', { lang });
-            await sendWhatsAppTextMessage(payload.from_phone, emptyMsg);
+            await dispatchTextMessage(payload.from_phone, emptyMsg);
           } else {
             const catalogInteractive = buildInteractiveCatalogPayload(activeBooks, lang);
-            const res = await sendWhatsAppInteractiveMessage(payload.from_phone, catalogInteractive);
+            const res = await dispatchInteractiveMessage(payload.from_phone, catalogInteractive);
             if (!res) {
-              await sendWhatsAppTextMessage(payload.from_phone, buildGroupedCatalogText(activeBooks, lang));
+              await dispatchTextMessage(payload.from_phone, buildGroupedCatalogText(activeBooks, lang));
             }
           }
 
@@ -824,7 +1327,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
         // 3. User taps a book subject in the list -> Dispatch Confirmation Prompt
         if (interactiveId.startsWith('request_concept_') || interactiveId.startsWith('request_book_')) {
-          const allInventory = await Array.fromAsync(activeInventory.scan());
+          const allInventory = await getScopedActiveInventory(isSandbox);
           const now = Date.now();
           const activeBooks = allInventory.filter(
             (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
@@ -834,7 +1337,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
           const lang: 'en' | 'fr' = isFr ? 'fr' : 'en';
 
           const confirmPayload = buildInteractiveRequestConfirmationPayload(interactiveId, activeBooks, lang);
-          const sendRes = await sendWhatsAppInteractiveMessage(payload.from_phone, confirmPayload);
+          const sendRes = await dispatchInteractiveMessage(payload.from_phone, confirmPayload);
 
           if (!sendRes) {
             const cleanConcept = interactiveId.replace(/^(?:request_concept_|request_book_)/, '');
@@ -842,7 +1345,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
               lang === 'fr'
                 ? `Souhaitez-vous demander *${interactiveTitle || cleanConcept}* ? Répondez 'OUI' pour confirmer.`
                 : `Do you want to request *${interactiveTitle || cleanConcept}*? Reply 'YES' to confirm.`;
-            await sendWhatsAppTextMessage(payload.from_phone, fallbackText);
+            await dispatchTextMessage(payload.from_phone, fallbackText);
           }
 
           const duration = Date.now() - startTime;
@@ -864,7 +1367,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
             lang === 'fr'
               ? '👍 Pas de problème ! Demande annulée. Envoyez "catalogue" pour explorer à nouveau. 😊'
               : '👍 No problem! Request cancelled. Send "catalog" anytime to browse again. 😊';
-          await sendWhatsAppTextMessage(payload.from_phone, cancelMsg);
+          await dispatchTextMessage(payload.from_phone, cancelMsg);
 
           const duration = Date.now() - startTime;
           metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'request_cancelled' } });
@@ -890,8 +1393,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
       if (isContactInquiry) {
         const lang = detectMessageLanguage(textMessage, 'en');
-        const replyMsg = await resolveMatchedContact(payload.from_phone, lang);
-        await sendWhatsAppTextMessage(payload.from_phone, replyMsg);
+        const replyMsg = await resolveMatchedContact(payload.from_phone, lang, isSandbox);
+        await dispatchTextMessage(payload.from_phone, replyMsg);
         const duration = Date.now() - startTime;
         metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'contact_info_provided' } });
 
@@ -908,16 +1411,16 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         /\b(?:other\s+grad|autr\s+class|other\s+book|autr\s+livr|more\s+grad|plus\s+de\s+class)\b/i.test(normText);
 
       if (isOtherGradesInquiry) {
-        const allInventory = await Array.fromAsync(activeInventory.scan());
+        const allInventory = await getScopedActiveInventory(isSandbox);
         const now = Date.now();
         const activeBooks = allInventory.filter(
           (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
         );
         const lang = detectMessageLanguage(textMessage, 'en');
         const otherPayload = buildInteractiveOtherGradesPayload(activeBooks, lang);
-        const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, otherPayload);
+        const dispatchRes = await dispatchInteractiveMessage(payload.from_phone, otherPayload);
         if (!dispatchRes) {
-          await sendWhatsAppTextMessage(payload.from_phone, buildGroupedCatalogText(activeBooks, lang));
+          await dispatchTextMessage(payload.from_phone, buildGroupedCatalogText(activeBooks, lang));
         }
         const replyText = lang === 'fr' ? 'Catalogue envoyé pour Autres Classes' : 'Catalog sent for Other Grades';
         const duration = Date.now() - startTime;
@@ -941,8 +1444,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
       if (isParentActivityInquiry) {
         const lang = detectMessageLanguage(textMessage, 'en');
-        const summaryMsg = await buildParentActivitySummary(payload.from_phone, lang);
-        await sendWhatsAppTextMessage(payload.from_phone, summaryMsg);
+        const summaryMsg = await buildParentActivitySummary(payload.from_phone, lang, isSandbox);
+        await dispatchTextMessage(payload.from_phone, summaryMsg);
         const duration = Date.now() - startTime;
         metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'parent_activity_summary_sent' } });
 
@@ -1028,8 +1531,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
       ) {
         if (activeIntents[0].intent === 'parent_activity') {
           const lang = activeIntents[0].lang || 'en';
-          const summaryMsg = await buildParentActivitySummary(payload.from_phone, lang);
-          await sendWhatsAppTextMessage(payload.from_phone, summaryMsg);
+          const summaryMsg = await buildParentActivitySummary(payload.from_phone, lang, isSandbox);
+          await dispatchTextMessage(payload.from_phone, summaryMsg);
           const duration = Date.now() - startTime;
           metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'parent_activity_summary_sent' } });
           return {
@@ -1041,8 +1544,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         }
         if (activeIntents[0].intent === 'contact_inquiry') {
           const lang = activeIntents[0].lang || 'en';
-          const contactMsg = await resolveMatchedContact(payload.from_phone, lang);
-          await sendWhatsAppTextMessage(payload.from_phone, contactMsg);
+          const contactMsg = await resolveMatchedContact(payload.from_phone, lang, isSandbox);
+          await dispatchTextMessage(payload.from_phone, contactMsg);
           const duration = Date.now() - startTime;
           metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'contact_info_provided' } });
           return {
@@ -1053,16 +1556,16 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
           };
         }
         if (activeIntents[0].intent === 'other_grades') {
-          const allInventory = await Array.fromAsync(activeInventory.scan());
+          const allInventory = await getScopedActiveInventory(isSandbox);
           const now = Date.now();
           const activeBooks = allInventory.filter(
             (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
           );
           const lang = activeIntents[0].lang || 'en';
           const otherPayload = buildInteractiveOtherGradesPayload(activeBooks, lang);
-          const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, otherPayload);
+          const dispatchRes = await dispatchInteractiveMessage(payload.from_phone, otherPayload);
           if (!dispatchRes) {
-            await sendWhatsAppTextMessage(payload.from_phone, buildGroupedCatalogText(activeBooks, lang));
+            await dispatchTextMessage(payload.from_phone, buildGroupedCatalogText(activeBooks, lang));
           }
           const replyText = lang === 'fr' ? 'Catalogue envoyé pour Autres Classes' : 'Catalog sent for Other Grades';
           const duration = Date.now() - startTime;
@@ -1078,7 +1581,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         const lang = activeIntents[0].lang || 'en';
         const replyMsg =
           activeIntents[0].replyMessage || (await generateLLMMessage('greeting', { lang }));
-        await sendWhatsAppTextMessage(payload.from_phone, replyMsg);
+        await dispatchTextMessage(payload.from_phone, replyMsg);
 
         const duration = Date.now() - startTime;
         metrics.emit('WorkflowCompletionTime', duration, {
@@ -1115,7 +1618,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
           subject: hasSpecificSubject ? firstOfferOrDemand.domain : undefined,
           lang,
         });
-        await sendWhatsAppTextMessage(payload.from_phone, clarificationMsg);
+        await dispatchTextMessage(payload.from_phone, clarificationMsg);
         metrics.emit('YearClarificationRequested', 1, { unit: 'Count', dimensions: { domain: firstOfferOrDemand.domain } });
 
         const duration = Date.now() - startTime;
@@ -1144,8 +1647,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
           // Process Handover & Sale Confirmation ("Sold", "Vendu", "Remis", "Got it")
           await context.step(`process-confirm-handover-${reqId}-${idx}`, async () => {
             return await tracer.startSegment('step_confirm_handover', async () => {
-              const allInventory = await Array.fromAsync(activeInventory.scan());
-              const allDemands = await Array.fromAsync(demandBoard.scan());
+              const allInventory = await getScopedActiveInventory(isSandbox);
+              const allDemands = await getScopedDemandBoard(isSandbox);
 
               // Check if sender is seller of a reserved or active item
               const sellerItem = allInventory.find(
@@ -1186,7 +1689,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                   item.lang === 'fr'
                     ? 'Merci ! Votre livre a été marqué comme vendu et retiré du catalogue disponible. Bonne rentrée scolaire ! 🎓'
                     : 'Thank you! Your book has been marked as sold and removed from the active catalog. Have a great school year! 🎓';
-                await sendWhatsAppTextMessage(payload.from_phone, confirmMsg);
+                await dispatchTextMessage(payload.from_phone, confirmMsg);
                 overallStatus = 'processed';
                 lastItemId = sellerItem.itemId;
                 lastReplyMessage = confirmMsg;
@@ -1218,7 +1721,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                   item.lang === 'fr'
                     ? "Merci d'avoir confirmé la réception du livre ! Votre demande a été finalisée. 🎓"
                     : 'Thank you for confirming receipt of the book! Your request has been completed. 🎓';
-                await sendWhatsAppTextMessage(payload.from_phone, confirmMsg);
+                await dispatchTextMessage(payload.from_phone, confirmMsg);
                 overallStatus = 'processed';
                 lastMatchedDemandId = buyerDemand.demandId;
                 lastReplyMessage = confirmMsg;
@@ -1227,7 +1730,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                   item.lang === 'fr'
                     ? "Aucun échange en cours n'a été trouvé pour votre numéro. Tapez 'catalogue' pour voir les livres disponibles."
                     : "No pending exchange was found for your phone number. Type 'catalog' to view available books.";
-                await sendWhatsAppTextMessage(payload.from_phone, noneMsg);
+                await dispatchTextMessage(payload.from_phone, noneMsg);
                 overallStatus = 'processed';
                 lastReplyMessage = noneMsg;
               }
@@ -1238,7 +1741,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         } else if (item.intent === 'catalog') {
           await context.step(`process-catalog-${reqId}-${idx}`, async () => {
             return await tracer.startSegment('step_process_catalog', async () => {
-              const allInventory = await Array.fromAsync(activeInventory.scan());
+              const allInventory = await getScopedActiveInventory(isSandbox);
               const now = Date.now();
               const activeBooks = allInventory.filter(
                 (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
@@ -1246,14 +1749,14 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
               if (activeBooks.length === 0) {
                 const emptyMsg = await generateLLMMessage('catalog_empty', { lang: item.lang });
-                await sendWhatsAppTextMessage(payload.from_phone, emptyMsg);
+                await dispatchTextMessage(payload.from_phone, emptyMsg);
                 lastReplyMessage = emptyMsg;
               } else {
                 const yearMatch = (item.title || '').match(/(?:Year|Année)\s*(\d{1,2})/i) || (item.concept || '').match(/(?:Year|Année)\s*(\d{1,2})/i);
                 if (yearMatch) {
                   const targetYear = item.lang === 'fr' ? `Année ${yearMatch[1]}` : `Year ${yearMatch[1]}`;
                   const yearPayload = buildInteractiveYearSubjectsPayload(targetYear, activeBooks, item.lang);
-                  const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, yearPayload);
+                  const dispatchRes = await dispatchInteractiveMessage(payload.from_phone, yearPayload);
                   if (!dispatchRes) {
                     const targetNum = parseInt(yearMatch[1], 10);
                     const filtered = activeBooks.filter((b) => {
@@ -1263,16 +1766,16 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                       return (b.title || '').toLowerCase().includes(targetYear.toLowerCase());
                     });
                     const yearText = buildGroupedCatalogText(filtered.length > 0 ? filtered : activeBooks, item.lang);
-                    await sendWhatsAppTextMessage(payload.from_phone, yearText);
+                    await dispatchTextMessage(payload.from_phone, yearText);
                   }
                   lastReplyMessage = `Year ${yearMatch[1]} catalog sent`;
                 } else {
                   const catalogPayload = buildInteractiveCatalogPayload(activeBooks, item.lang);
                   const catalogMessage = buildGroupedCatalogText(activeBooks, item.lang);
 
-                  const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, catalogPayload);
+                  const dispatchRes = await dispatchInteractiveMessage(payload.from_phone, catalogPayload);
                   if (!dispatchRes) {
-                    await sendWhatsAppTextMessage(payload.from_phone, catalogMessage);
+                    await dispatchTextMessage(payload.from_phone, catalogMessage);
                   }
                   lastReplyMessage = catalogMessage;
                 }
@@ -1285,12 +1788,12 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         } else if (item.intent === 'demand_board') {
           await context.step(`process-demand-board-${reqId}-${idx}`, async () => {
             return await tracer.startSegment('step_process_demand_board', async () => {
-              const allDemands = await Array.fromAsync(demandBoard.scan());
+              const allDemands = await getScopedDemandBoard(isSandbox);
               const openDemands = allDemands.filter((d) => d.status === 'pending');
 
               if (openDemands.length === 0) {
                 const emptyMsg = await generateLLMMessage('demand_board_empty', { lang: item.lang });
-                await sendWhatsAppTextMessage(payload.from_phone, emptyMsg);
+                await dispatchTextMessage(payload.from_phone, emptyMsg);
                 lastReplyMessage = emptyMsg;
               } else {
                 const formattedDemands = Array.from(
@@ -1308,7 +1811,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                     : `\n\n💡 Reply with *"I have [Subject/Year]"* to list it for a parent!`;
 
                 const fullMessage = `${header}\n\n${demandsText}${footer}`;
-                await sendWhatsAppTextMessage(payload.from_phone, fullMessage);
+                await dispatchTextMessage(payload.from_phone, fullMessage);
                 lastReplyMessage = fullMessage;
               }
               overallStatus = 'processed';
@@ -1319,8 +1822,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         } else if (item.intent === 'parent_activity') {
           await context.step(`process-parent-activity-${reqId}-${idx}`, async () => {
             return await tracer.startSegment('step_parent_activity', async () => {
-              const summaryMsg = await buildParentActivitySummary(payload.from_phone, item.lang);
-              await sendWhatsAppTextMessage(payload.from_phone, summaryMsg);
+              const summaryMsg = await buildParentActivitySummary(payload.from_phone, item.lang, isSandbox);
+              await dispatchTextMessage(payload.from_phone, summaryMsg);
               lastReplyMessage = summaryMsg;
               overallStatus = 'processed';
               return true;
@@ -1330,8 +1833,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         } else if (item.intent === 'contact_inquiry') {
           await context.step(`process-contact-inquiry-${reqId}-${idx}`, async () => {
             return await tracer.startSegment('step_contact_inquiry', async () => {
-              const contactMsg = await resolveMatchedContact(payload.from_phone, item.lang);
-              await sendWhatsAppTextMessage(payload.from_phone, contactMsg);
+              const contactMsg = await resolveMatchedContact(payload.from_phone, item.lang, isSandbox);
+              await dispatchTextMessage(payload.from_phone, contactMsg);
               lastReplyMessage = contactMsg;
               overallStatus = 'matched';
               return true;
@@ -1341,15 +1844,15 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         } else if (item.intent === 'other_grades') {
           await context.step(`process-other-grades-${reqId}-${idx}`, async () => {
             return await tracer.startSegment('step_other_grades', async () => {
-              const allInventory = await Array.fromAsync(activeInventory.scan());
+              const allInventory = await getScopedActiveInventory(isSandbox);
               const now = Date.now();
               const activeBooks = allInventory.filter(
                 (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
               );
               const otherPayload = buildInteractiveOtherGradesPayload(activeBooks, item.lang);
-              const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, otherPayload);
+              const dispatchRes = await dispatchInteractiveMessage(payload.from_phone, otherPayload);
               if (!dispatchRes) {
-                await sendWhatsAppTextMessage(payload.from_phone, buildGroupedCatalogText(activeBooks, item.lang));
+                await dispatchTextMessage(payload.from_phone, buildGroupedCatalogText(activeBooks, item.lang));
               }
               lastReplyMessage = item.lang === 'fr' ? 'Catalogue envoyé pour Autres Classes' : 'Catalog sent for Other Grades';
               overallStatus = 'processed';
@@ -1361,7 +1864,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
           // Process Demand (Wishlist entry)
           await context.step(`process-demand-${reqId}-${idx}-${item.concept}`, async () => {
             return await tracer.startSegment('step_process_demand', async () => {
-              const allInventory = await Array.fromAsync(activeInventory.scan());
+              const allInventory = await getScopedActiveInventory(isSandbox);
               const now = Date.now();
               const availableInventory = allInventory.filter(
                 (i) =>
@@ -1392,12 +1895,13 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                   domain: item.domain,
                   status: 'pending',
                   preferredLang: demandLang,
+                  isSimulated: isSandbox ? true : undefined,
                   createdAt: Date.now(),
                 };
                 await demandBoard.put(demandEntry);
 
                 const postedMsg = await generateLLMMessage('demand_posted', { title: item.title, lang: demandLang });
-                await sendWhatsAppTextMessage(payload.from_phone, postedMsg);
+                await dispatchTextMessage(payload.from_phone, postedMsg);
                 lastReplyMessage = postedMsg;
                 overallStatus = 'processed';
                 return demandId;
@@ -1431,6 +1935,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                     matchedDemandId: demandId,
                     handoverCode,
                     preferredLang: book.preferredLang || 'en',
+                    isSimulated: isSandbox ? true : book.isSimulated,
                   });
                 }
 
@@ -1449,6 +1954,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                   matchedItemId: representativeItem.itemId,
                   matchedAt: Date.now(),
                   handoverCode,
+                  isSimulated: isSandbox ? true : undefined,
                   createdAt: Date.now(),
                 };
                 await demandBoard.put(demandEntry);
@@ -1471,7 +1977,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                   handoverCode,
                   lang: sellerLang,
                 });
-                await sendWhatsAppTextMessage(sellerPhone, sellerMsg);
+                await dispatchTextMessage(sellerPhone, sellerMsg);
 
                 // Notify buyer about this parent
                 const buyerMsg = await generateLLMMessage('match_buyer', {
@@ -1480,7 +1986,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                   handoverCode,
                   lang: demandLang,
                 });
-                await sendWhatsAppTextMessage(payload.from_phone, buyerMsg);
+                await dispatchTextMessage(payload.from_phone, buyerMsg);
                 lastReplyMessage = buyerMsg;
               }
 
@@ -1494,7 +2000,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
           const matchResult = await context.step(`query-demand-board-matching-${reqId}-${idx}-${item.concept}`, async () => {
             return await tracer.startSegment('step_match_existing_demand', async () => {
               const targetConcept = normalizeConceptKey(item.concept, item.title);
-              const allDemands = await Array.fromAsync(demandBoard.scan());
+              const allDemands = await getScopedDemandBoard(isSandbox);
               const openDemands = allDemands
                 .filter(
                   (d) =>
@@ -1527,6 +2033,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                   reservedForPhone: openDemand.userPhone,
                   matchedDemandId: openDemand.demandId,
                   handoverCode,
+                  isSimulated: isSandbox ? true : undefined,
                   createdAt: Date.now(),
                 });
 
@@ -1536,6 +2043,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                   matchedItemId: id,
                   matchedAt: Date.now(),
                   handoverCode,
+                  isSimulated: isSandbox ? true : openDemand.isSimulated,
                 });
 
                 emitLifecycleEvent('MatchFound', {
@@ -1578,8 +2086,8 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
               handoverCode: matchResult.handoverCode,
               lang: matchResult.buyerLang || openDemand.preferredLang || 'en',
             });
-            await sendWhatsAppTextMessage(payload.from_phone, sellerMsg);
-            await sendWhatsAppTextMessage(openDemand.userPhone, buyerMsg);
+            await dispatchTextMessage(payload.from_phone, sellerMsg);
+            await dispatchTextMessage(openDemand.userPhone, buyerMsg);
           } else {
             // No match -> Add to ActiveInventory
             const itemId = await context.step(`publish-active-inventory-${reqId}-${idx}-${item.concept}`, async () => {
@@ -1597,6 +2105,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
                   sellerPhone: payload.from_phone,
                   status: 'active',
                   preferredLang: item.lang,
+                  isSimulated: isSandbox ? true : undefined,
                   createdAt: Date.now(),
                 };
 
@@ -1612,7 +2121,7 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
 
                 if (extractedIntents.filter(i => i.intent === 'offer').length === 1) {
                   const activeMsg = await generateLLMMessage('listing_active', { title: item.title, lang: item.lang });
-                  await sendWhatsAppTextMessage(payload.from_phone, activeMsg);
+                  await dispatchTextMessage(payload.from_phone, activeMsg);
                   lastReplyMessage = activeMsg;
                 }
 
@@ -1656,18 +2165,28 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         const batchMsg = isFr
           ? `📚 *${newlyAddedBooks.length} livres ajoutés au catalogue scolaire !*\n\n${bookBullets}\n\n🤝 Merci de partager ! Nous vous avertirons automatiquement dès qu'un parent demandera l'un de ces livres.`
           : `📚 *${newlyAddedBooks.length} books listed in school catalog!*\n\n${bookBullets}\n\n🤝 Thank you for sharing! We will notify you automatically as soon as another parent requests any of these books.`;
-        await sendWhatsAppTextMessage(payload.from_phone, batchMsg);
+        await dispatchTextMessage(payload.from_phone, batchMsg);
         lastReplyMessage = batchMsg;
       }
 
-      const primaryMetadata = extractedIntents[0] || {
-        title: 'Item',
-        domain: 'Marketplace' as const,
-        providerCategory: 'HighSchool' as const,
-        concept: 'Year5Chemistry',
-        conditionType: 'Good' as const,
-        description: '',
-      };
+      const rawMetadata = extractedIntents[0];
+      const primaryMetadata = rawMetadata
+        ? {
+            title: rawMetadata.title || 'Book',
+            domain: rawMetadata.domain || ('Science' as const),
+            providerCategory: rawMetadata.providerCategory || ('HighSchool' as const),
+            concept: rawMetadata.concept || 'GeneralBooks',
+            conditionType: rawMetadata.conditionType || ('Good' as const),
+            description: rawMetadata.description || rawMetadata.title || '',
+          }
+        : {
+            title: 'Item',
+            domain: 'Science' as const,
+            providerCategory: 'HighSchool' as const,
+            concept: 'Year5Chemistry',
+            conditionType: 'Good' as const,
+            description: '',
+          };
 
       const duration = Date.now() - startTime;
       metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: overallStatus } });
@@ -2346,7 +2865,8 @@ export async function parseParentMessageIntentsWithLLM(text: string): Promise<Ex
           : 'Good';
         
         item.concept = normalizeConceptKey(item.concept || '', text);
-        item.title = sanitizeExtractedTitle(item.title || '', text, item.concept, item.lang || 'en');
+        item.title = sanitizeExtractedTitle(item.title || '', text, item.concept, item.lang || 'en') || 'Book';
+        item.description = (typeof item.description === 'string' && item.description.trim()) ? item.description : (item.title || text || '');
         
         const hasSpecificSubject =
           item.concept !== 'GeneralBooks' &&
@@ -3443,7 +3963,8 @@ export function buildGroupedCatalogText(
  */
 export async function buildParentActivitySummary(
   phone: string,
-  lang: 'en' | 'fr' = 'en'
+  lang: 'en' | 'fr' = 'en',
+  isSandbox: boolean = false
 ): Promise<string> {
   const userClean = (phone || '').replace(/\D/g, '');
   const isPhoneMatch = (p?: string) => {
@@ -3458,8 +3979,8 @@ export async function buildParentActivitySummary(
   };
 
   const [allInventory, allDemands] = await Promise.all([
-    Array.fromAsync(activeInventory.scan()),
-    Array.fromAsync(demandBoard.scan()),
+    getScopedActiveInventory(isSandbox),
+    getScopedDemandBoard(isSandbox),
   ]);
 
   const now = Date.now();
@@ -3640,7 +4161,8 @@ export async function buildParentActivitySummary(
  */
 export async function resolveMatchedContact(
   fromPhone: string,
-  lang: 'en' | 'fr' = 'en'
+  lang: 'en' | 'fr' = 'en',
+  isSandbox: boolean = false
 ): Promise<string> {
   const userClean = (fromPhone || '').replace(/\D/g, '');
   const isPhoneMatch = (p?: string) => {
@@ -3655,8 +4177,8 @@ export async function resolveMatchedContact(
   };
 
   const [allInventory, allDemands] = await Promise.all([
-    Array.fromAsync(activeInventory.scan()),
-    Array.fromAsync(demandBoard.scan()),
+    getScopedActiveInventory(isSandbox),
+    getScopedDemandBoard(isSandbox),
   ]);
   const now = Date.now();
 
@@ -4243,8 +4765,40 @@ Vous avez des livres ? Répondez avec des photos pour aider les parents en atten
   /**
    * 15. Retrieve Parent Activity Summary (Added, In Progress / Reserved, Sold, Bought, Demanded)
    */
-  async getParentActivity(phone: string, lang: 'en' | 'fr' = 'en') {
-    return await buildParentActivitySummary(phone, lang);
+  async getParentActivity(phone: string, lang: 'en' | 'fr' = 'en', isSandbox: boolean = false) {
+    return await buildParentActivitySummary(phone, lang, isSandbox);
+  },
+
+  /**
+   * 16. Developer Sandbox Control Endpoints (Option 1)
+   */
+  async toggleSandboxSession(phone: string, enable: boolean) {
+    await setSandboxSession(phone, enable);
+    return { success: true, phone, active: enable };
+  },
+
+  async seedSandbox(phone: string, lang: 'en' | 'fr' = 'en') {
+    const result = await seedSandboxData(phone, lang);
+    return { success: true, phone, ...result };
+  },
+
+  async resetSandbox(phone?: string) {
+    const result = await resetSandboxData(phone);
+    return { success: true, ...result };
+  },
+
+  async getSandboxStatus(phone: string) {
+    const active = await isSandboxSessionActive(phone);
+    const [simInventory, simDemands] = await Promise.all([
+      getScopedActiveInventory(true),
+      getScopedDemandBoard(true),
+    ]);
+    return {
+      phone,
+      active,
+      simulatedInventoryCount: simInventory.length,
+      simulatedDemandCount: simDemands.length,
+    };
   },
 
   /** Security & Observability System Status */
