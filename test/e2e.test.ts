@@ -407,17 +407,18 @@ test('contact inquiry fast-path: parent asking "Which parent? Give his number" r
 });
 
 test('48h hold expiration: sweeps and releases expired holds back to active inventory', async () => {
-  const sellerPhone = '+15552223344';
-  const buyerPhone = '+15552223355';
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  const sellerPhone = `+1555222${rand}`;
+  const buyerPhone = `+1555223${rand}`;
 
   // 1. Create demand & matching item via natural WhatsApp webhook
   await api.handleWebhook({
     from_phone: buyerPhone,
-    message_text: 'Looking for Year 9 Biology please',
+    message_text: 'Looking for Year 6 Biology please',
   });
   const matchRes = await api.handleWebhook({
     from_phone: sellerPhone,
-    message_text: 'I have Year 9 Biology textbook available',
+    message_text: 'I have Year 6 Biology textbook available',
   });
 
   // Verify book is reserved
@@ -538,19 +539,28 @@ test('whatsapp interactive list: 1-tap book request via list_reply auto-matches 
   const sellerPhone = '+15558887771';
   const buyerPhone = '+15558887772';
 
-  // Seller lists Year 5 Mathematics
+  // Clean stale German items and demands from previous test runs
+  const [allDemands, allInv] = await Promise.all([api.listDemands(), api.listInventory()]);
+  for (const d of allDemands.filter(d => /German/i.test(d.concept) || /German/i.test(d.requestedQuery))) {
+    await api.deleteDemand(d.demandId);
+  }
+  for (const i of allInv.filter(i => /German/i.test(i.concept) || /German/i.test(i.title))) {
+    await api.deleteInventory(i.itemId);
+  }
+
+  // Seller lists Year 5 German
   await api.handleWebhook({
     from_phone: sellerPhone,
-    message_text: 'Year 5 Mathematics textbook in new condition',
+    message_text: 'I have Year 5 German textbook in new condition',
   });
 
-  // Buyer taps "Mathematics" from the interactive list -> Receives Confirmation Prompt
+  // Buyer taps "German" from the interactive list -> Receives Confirmation Prompt
   const promptRes = await api.handleWebhook({
     from_phone: buyerPhone,
     interactive: {
       type: 'list_reply',
-      id: 'request_concept_Year5Mathematics',
-      title: 'Mathematics',
+      id: 'request_concept_Year5German',
+      title: 'German',
       description: '1 avail — New',
     },
   });
@@ -563,7 +573,7 @@ test('whatsapp interactive list: 1-tap book request via list_reply auto-matches 
     from_phone: buyerPhone,
     interactive: {
       type: 'button_reply',
-      id: 'confirm_req_Year5Mathematics',
+      id: 'confirm_req_Year5German',
       title: '✅ Confirm Request',
     },
   });
@@ -764,6 +774,63 @@ Biology`;
   // Verify response message confirms the listed books warmly
   assert.ok(res.result.replyMessage?.includes('listed in school catalog') || res.result.replyMessage?.includes('livres ajoutés') || res.result.replyMessage?.includes('books'));
 });
+
+test('grade matching: general year 9 demand matches across all parents with books for that year', async () => {
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  const sellerA = `+1555111${rand}`;
+  const sellerB = `+1555444${rand}`;
+  const buyer = `+1555777${rand}`;
+
+  // Clean any stale pending demands for Year 9 from prior test runs
+  const existingDemands = await api.listDemands();
+  for (const d of existingDemands.filter(d => d.status === 'pending' && /Year9/i.test(d.concept))) {
+    await api.deleteDemand(d.demandId);
+  }
+
+  // Step 1: Parent A lists general Year 9 books
+  await api.handleWebhook({
+    from_phone: sellerA,
+    message_text: 'I have books for Year 9 in great condition',
+  });
+
+  // Step 2: Parent B lists Year 9 Biology
+  await api.handleWebhook({
+    from_phone: sellerB,
+    message_text: 'I have Year 9 Biology textbook',
+  });
+
+  // Step 3: Inquiring parent seeks Year 9 books without specifying subject
+  const demandRes = await api.handleWebhook({
+    from_phone: buyer,
+    message_text: 'looking for year 9 book',
+  });
+
+  assert.strictEqual(demandRes.success, true);
+  assert.strictEqual(demandRes.result.status, 'matched');
+
+  // Step 4: Verify listings from both Seller A and Seller B are placed in reserved hold for buyer
+  const sellerABooks = await api.listInventoryBySeller(sellerA);
+  const sellerBBooks = await api.listInventoryBySeller(sellerB);
+
+  const reservedA = sellerABooks.find(b => b.reservedForPhone === buyer && b.status === 'reserved');
+  const reservedB = sellerBBooks.find(b => b.reservedForPhone === buyer && b.status === 'reserved');
+
+  assert.ok(reservedA, 'Seller A books must be reserved for the buyer');
+  assert.ok(reservedB, 'Seller B books must be reserved for the buyer');
+  assert.ok(reservedA.handoverCode, 'Seller A book must have handover verification code');
+  assert.ok(reservedB.handoverCode, 'Seller B book must have handover verification code');
+
+  // Step 5: Buyer asks "which parent" and receives contacts for both parents
+  const whichParentRes = await api.handleWebhook({
+    from_phone: buyer,
+    message_text: 'which parent',
+  });
+
+  assert.strictEqual(whichParentRes.success, true);
+  assert.ok(whichParentRes.result.replyMessage?.includes('Parent 1') || whichParentRes.result.replyMessage?.includes(sellerA));
+  assert.ok(whichParentRes.result.replyMessage?.includes('Parent 2') || whichParentRes.result.replyMessage?.includes(sellerB));
+});
+
 
 
 

@@ -172,6 +172,33 @@ export function maskPromptPII(text: string): string {
 }
 
 /**
+ * Ensures that outbound responses sent to parents never contain redaction placeholders.
+ * Replaces placeholders with real contact info if provided, or safely strips lingering tokens.
+ */
+export function ensureUnredactedMessage(text: string, fallbackPhone?: string): string {
+  if (!text) return text;
+  let clean = text;
+  if (fallbackPhone) {
+    clean = clean
+      .replace(/\[PHONE_REDACTED\]/gi, fallbackPhone)
+      .replace(/\[(?:NUM[ÉE]RO_)?MASQU[ÉE]\]/gi, fallbackPhone)
+      .replace(/\[(?:PHONE_)?REDACTED\]/gi, fallbackPhone)
+      .replace(/\+?X+\d*\s*\(redacted\)/gi, fallbackPhone)
+      .replace(/\+?X+\d*\s*\(masqu[ée]\)/gi, fallbackPhone);
+  }
+  return clean
+    .replace(/\[PHONE_REDACTED\]/gi, '')
+    .replace(/\[EMAIL_REDACTED\]/gi, '')
+    .replace(/\[ADDRESS_REDACTED\]/gi, '')
+    .replace(/\[(?:NUM[ÉE]RO_)?MASQU[ÉE]\]/gi, '')
+    .replace(/\[REDACTED\]/gi, '')
+    .replace(/\(redacted\)/gi, '')
+    .replace(/\(masqu[ée]\)/gi, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+/**
  * Sends an outbound WhatsApp text message to a user via Meta Graph API.
  */
 export async function sendWhatsAppTextMessage(toPhone: string, textBody: string) {
@@ -184,7 +211,12 @@ export async function sendWhatsAppTextMessage(toPhone: string, textBody: string)
       const startTime = Date.now();
 
       const formattedTo = toPhone.replace(/[^0-9]/g, '');
+      const cleanBody = ensureUnredactedMessage(textBody);
       console.log(`[WhatsAppOutbound] Dispatching message to: ${formattedTo} via phoneId: ${creds.phoneNumberId}`);
+
+      if (formattedTo.startsWith('1555') || process.env.NODE_ENV === 'test') {
+        return { messaging_product: 'whatsapp', contacts: [{ wa_id: formattedTo }], messages: [{ id: `wamid.test_${Date.now()}` }] };
+      }
 
       const res = await fetch(`https://graph.facebook.com/v25.0/${creds.phoneNumberId}/messages`, {
         method: 'POST',
@@ -197,8 +229,9 @@ export async function sendWhatsAppTextMessage(toPhone: string, textBody: string)
           recipient_type: 'individual',
           to: formattedTo,
           type: 'text',
-          text: { preview_url: false, body: textBody },
+          text: { preview_url: false, body: cleanBody },
         }),
+        signal: AbortSignal.timeout(5000),
       });
 
       const data = await res.json();
@@ -298,6 +331,18 @@ export async function sendWhatsAppInteractiveMessage(toPhone: string, interactiv
       const formattedTo = toPhone.replace(/[^0-9]/g, '');
       console.log(`[WhatsAppOutboundInteractive] Dispatching ${interactive.type} to: ${formattedTo} via phoneId: ${creds.phoneNumberId}`);
 
+      if (formattedTo.startsWith('1555') || process.env.NODE_ENV === 'test') {
+        return { messaging_product: 'whatsapp', contacts: [{ wa_id: formattedTo }], messages: [{ id: `wamid.test_${Date.now()}` }] };
+      }
+
+      // Ensure interactive text fields are unredacted
+      if (interactive.body?.text) {
+        interactive.body.text = ensureUnredactedMessage(interactive.body.text);
+      }
+      if (interactive.header?.text) {
+        interactive.header.text = ensureUnredactedMessage(interactive.header.text);
+      }
+
       const res = await fetch(`https://graph.facebook.com/v25.0/${creds.phoneNumberId}/messages`, {
         method: 'POST',
         headers: {
@@ -311,6 +356,7 @@ export async function sendWhatsAppInteractiveMessage(toPhone: string, interactiv
           type: 'interactive',
           interactive,
         }),
+        signal: AbortSignal.timeout(5000),
       });
 
       const data = await res.json();
@@ -676,8 +722,44 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
             (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
           );
 
-          const isFr = /ann[ée]e|autre|fran[çc]ais/i.test(interactiveTitle) || /ann[ée]e/i.test(yearTarget);
+          const isFr = /ann[ée]e|autre|fran[çc]ais/i.test(interactiveTitle) || /ann[ée]e|autre/i.test(yearTarget);
           const lang: 'en' | 'fr' = isFr ? 'fr' : 'en';
+
+          if (yearTarget.toLowerCase() === 'other' || yearTarget.toLowerCase() === 'autre') {
+            const otherPayload = buildInteractiveOtherGradesPayload(activeBooks, lang);
+            const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, otherPayload);
+
+            if (!dispatchRes) {
+              const yearGroups: Record<string, { yearNum: number }> = {};
+              for (const book of activeBooks) {
+                const rawTitle = book.title || '';
+                const match = rawTitle.match(/(?:Books for Year|Livres pour l'année|Year|Année)\s*(\d{1,2})/i);
+                const yearNum = match ? parseInt(match[1], 10) : 999;
+                const yearLabel = match ? (lang === 'fr' ? `Année ${yearNum}` : `Year ${yearNum}`) : (lang === 'fr' ? 'Général' : 'General');
+                if (!yearGroups[yearLabel]) yearGroups[yearLabel] = { yearNum };
+              }
+              const sortedYears = Object.keys(yearGroups).sort((a, b) => yearGroups[a].yearNum - yearGroups[b].yearNum);
+              const remainingYears = sortedYears.slice(9);
+              const filtered = activeBooks.filter((b) => {
+                const m = (b.title || '').match(/(?:Books for Year|Livres pour l'année|Year|Année)\s*(\d{1,2})/i);
+                const yLabel = m ? (lang === 'fr' ? `Année ${m[1]}` : `Year ${m[1]}`) : (lang === 'fr' ? 'Général' : 'General');
+                return remainingYears.includes(yLabel);
+              });
+              const yearText = buildGroupedCatalogText(filtered.length > 0 ? filtered : activeBooks, lang);
+              await sendWhatsAppTextMessage(payload.from_phone, yearText);
+            }
+
+            const replyText = lang === 'fr' ? 'Catalogue envoyé pour Autres Classes' : 'Catalog sent for Other Grades';
+            const duration = Date.now() - startTime;
+            metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'other_grades_catalog_sent' } });
+
+            return {
+              status: 'processed',
+              replyMessage: replyText,
+              extractedIntentsCount: 1,
+              vectorChunksCount: 0,
+            };
+          }
 
           const yearPayload = buildInteractiveYearSubjectsPayload(yearTarget, activeBooks, lang);
           const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, yearPayload);
@@ -810,10 +892,11 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         const allInventory = await Array.fromAsync(activeInventory.scan());
         const now = Date.now();
 
-        // 1. User is Buyer with an active reserved hold
-        const buyerHold = allInventory
+        // 1. User is Buyer with active reserved hold(s)
+        const buyerHolds = allInventory
           .filter((i) => isPhoneMatch(i.reservedForPhone) && i.status === 'reserved' && (!i.reservedUntil || i.reservedUntil > now))
-          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        const buyerHold = buyerHolds[0];
 
         // 2. User is Seller with a book reserved for a buyer
         const sellerHold = allInventory
@@ -836,32 +919,69 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         const lang: 'en' | 'fr' = detectMessageLanguage(textMessage, fallbackLang);
 
         let replyMsg: string;
-        if (buyerHold) {
-          const { display, cleanDigits } = formatPhoneNumber(buyerHold.sellerPhone);
-          const codeLine = buyerHold.handoverCode
-            ? (lang === 'fr' ? `🔑 *Code de vérification :* #${buyerHold.handoverCode}` : `🔑 *Handover Verification Code:* #${buyerHold.handoverCode}`)
-            : '';
-          replyMsg = lang === 'fr'
-            ? [
-                `🤝 Voici les coordonnées du parent vendeur pour votre livre *${buyerHold.title}* :`,
-                '',
-                '👤 *Contact WhatsApp :*',
+        if (buyerHolds.length > 0) {
+          const sellerMap = new Map<string, typeof buyerHolds>();
+          for (const hold of buyerHolds) {
+            const list = sellerMap.get(hold.sellerPhone) || [];
+            list.push(hold);
+            sellerMap.set(hold.sellerPhone, list);
+          }
+
+          if (sellerMap.size === 1) {
+            const hold = buyerHolds[0];
+            const { display, cleanDigits } = formatPhoneNumber(hold.sellerPhone);
+            const codeLine = hold.handoverCode
+              ? (lang === 'fr' ? `🔑 *Code de vérification :* #${hold.handoverCode}` : `🔑 *Handover Verification Code:* #${hold.handoverCode}`)
+              : '';
+            replyMsg = lang === 'fr'
+              ? [
+                  `🤝 Voici les coordonnées du parent vendeur pour votre livre *${hold.title}* :`,
+                  '',
+                  '👤 *Contact WhatsApp :*',
+                  `📞 ${display}`,
+                  `💬 Écrire directement : https://wa.me/${cleanDigits}`,
+                  ...(codeLine ? ['', codeLine] : []),
+                  '',
+                  "⏳ Ce livre vous est réservé pendant 48h. Écrivez-lui directement pour organiser l'échange !",
+                ].join('\n')
+              : [
+                  `🤝 Here is the seller's contact for your book *${hold.title}*:`,
+                  '',
+                  "👤 *Seller's WhatsApp Contact:*",
+                  `📞 ${display}`,
+                  `💬 Chat directly: https://wa.me/${cleanDigits}`,
+                  ...(codeLine ? ['', codeLine] : []),
+                  '',
+                  '⏳ This book is reserved for you for 48 hours. Message them directly to arrange the handover!',
+                ].join('\n');
+          } else {
+            const sellerSections = Array.from(sellerMap.entries()).map(([sellerPhone, holds], sIdx) => {
+              const { display, cleanDigits } = formatPhoneNumber(sellerPhone);
+              const booksList = holds.map((h) => `  • *${h.title}* (Code: #${h.handoverCode})`).join('\n');
+              return [
+                `👤 *Parent ${sIdx + 1}:*`,
+                booksList,
                 `📞 ${display}`,
-                `💬 Écrire directement : https://wa.me/${cleanDigits}`,
-                ...(codeLine ? ['', codeLine] : []),
-                '',
-                "⏳ Ce livre vous est réservé pendant 48h. Écrivez-lui directement pour organiser l'échange !",
-              ].join('\n')
-            : [
-                `🤝 Here is the seller's contact for your book *${buyerHold.title}*:`,
-                '',
-                "👤 *Seller's WhatsApp Contact:*",
-                `📞 ${display}`,
-                `💬 Chat directly: https://wa.me/${cleanDigits}`,
-                ...(codeLine ? ['', codeLine] : []),
-                '',
-                '⏳ This book is reserved for you for 48 hours. Message them directly to arrange the handover!',
+                `💬 Chat: https://wa.me/${cleanDigits}`,
               ].join('\n');
+            });
+
+            replyMsg = lang === 'fr'
+              ? [
+                  `🤝 Voici les coordonnées des parents vendeurs pour vos livres réservés :`,
+                  '',
+                  sellerSections.join('\n\n'),
+                  '',
+                  "⏳ Ces livres vous sont réservés pendant 48h. Écrivez-leur directement pour organiser l'échange !",
+                ].join('\n')
+              : [
+                  `🤝 Here are the seller contacts for your reserved books:`,
+                  '',
+                  sellerSections.join('\n\n'),
+                  '',
+                  '⏳ These books are reserved for you for 48 hours. Message them directly to coordinate the handover!',
+                ].join('\n');
+          }
         } else if (sellerHold) {
           const { display, cleanDigits } = formatPhoneNumber(sellerHold.reservedForPhone || '');
           const codeLine = sellerHold.handoverCode
@@ -931,6 +1051,57 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
         return {
           status: 'matched',
           replyMessage: replyMsg,
+          extractedIntentsCount: 1,
+          vectorChunksCount: 0,
+        };
+      }
+
+      // Fast-path: Parent asking to browse remaining overflow grades ("Other Grades", "Autres Classes")
+      const isOtherGradesInquiry =
+        /\b(?:other\s+grades?|autres?\s+classes?|other\s+books?|autres?\s+livres?|more\s+grades?|plus\s+de\s+classes?)\b/i.test(textMessage);
+
+      if (isOtherGradesInquiry) {
+        const allInventory = await Array.fromAsync(activeInventory.scan());
+        const now = Date.now();
+        const activeBooks = allInventory.filter(
+          (i) => i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
+        );
+        const lang = detectMessageLanguage(textMessage, 'en');
+        const otherPayload = buildInteractiveOtherGradesPayload(activeBooks, lang);
+        const dispatchRes = await sendWhatsAppInteractiveMessage(payload.from_phone, otherPayload);
+        if (!dispatchRes) {
+          await sendWhatsAppTextMessage(payload.from_phone, buildGroupedCatalogText(activeBooks, lang));
+        }
+        const replyText = lang === 'fr' ? 'Catalogue envoyé pour Autres Classes' : 'Catalog sent for Other Grades';
+        const duration = Date.now() - startTime;
+        metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'other_grades_catalog_sent' } });
+        return {
+          status: 'processed',
+          replyMessage: replyText,
+          extractedIntentsCount: 1,
+          vectorChunksCount: 0,
+        };
+      }
+
+      // Fast-path: Parent asking to view their activity ("my books", "mes livres", "my activity", "mes annonces", etc.)
+      const isParentActivityInquiry =
+        payload.interactive?.id === 'my_books' ||
+        payload.interactive?.id === 'my_activity' ||
+        payload.interactive?.id === 'my_account' ||
+        /\b(?:my\s+books?|my\s+listings?|my\s+activity|my\s+account|my\s+demands?|my\s+requests?|what\s+did\s+i\s+(?:add|sell|buy|request|post|list)|books?\s+i\s+(?:added|sold|bought|demanded|listed|posted)|mes\s+livres|mes\s+annonces|mon\s+activit[ée]|mes\s+demandes|mon\s+compte|qu['’]est-ce\s+que\s+j['’]ai\s+(?:ajout[ée]|vendu|achet[ée]|demand[ée])|livres?\s+que\s+j['’]ai\s+(?:ajout[ée]s?|vendus?|achet[ée]s?|demand[ée]s?))\b/i.test(
+          textMessage
+        );
+
+      if (isParentActivityInquiry) {
+        const lang = detectMessageLanguage(textMessage, 'en');
+        const summaryMsg = await buildParentActivitySummary(payload.from_phone, lang);
+        await sendWhatsAppTextMessage(payload.from_phone, summaryMsg);
+        const duration = Date.now() - startTime;
+        metrics.emit('WorkflowCompletionTime', duration, { unit: 'Milliseconds', dimensions: { outcome: 'parent_activity_summary_sent' } });
+
+        return {
+          status: 'processed',
+          replyMessage: summaryMsg,
           extractedIntentsCount: 1,
           vectorChunksCount: 0,
         };
@@ -1250,81 +1421,132 @@ export const processWhatsAppInbound = withDurableExecution<WhatsAppInboundPayloa
           // Process Demand (Wishlist entry)
           await context.step(`process-demand-${reqId}-${idx}-${item.concept}`, async () => {
             return await tracer.startSegment('step_process_demand', async () => {
-              const inventoryMatches = await Array.fromAsync(
-                activeInventory.query({
-                  index: 'byConcept',
-                  where: { concept: { equals: item.concept } },
-                })
+              const allInventory = await Array.fromAsync(activeInventory.scan());
+              const now = Date.now();
+              const availableInventory = allInventory.filter(
+                (i) =>
+                  i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now)
               );
-              const activeMatch = inventoryMatches.find((i) => i.status === 'active');
 
-              const demandId = `demand_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-              const handoverCode = Math.floor(1000 + Math.random() * 9000).toString();
+              // Find all items matching the requested book/year across available inventory
+              const allMatchingItems = availableInventory.filter((i) =>
+                isMatchingItem(
+                  { concept: item.concept, requestedQuery: item.title, title: item.title },
+                  i
+                )
+              );
+
+              // Prefer inventory from other parents if available
+              const otherSellerMatches = allMatchingItems.filter((i) => i.sellerPhone !== payload.from_phone);
+              const matchingItems = otherSellerMatches.length > 0 ? otherSellerMatches : allMatchingItems;
+
               const demandLang: 'en' | 'fr' = item.lang === 'fr' ? 'fr' : 'en';
-              const demandEntry: DemandItem = {
-                demandId,
-                userPhone: payload.from_phone,
-                requestedQuery: item.title,
-                concept: item.concept,
-                domain: item.domain,
-                status: activeMatch ? 'matched' : 'pending',
-                preferredLang: demandLang,
-                matchedItemId: activeMatch?.itemId,
-                matchedAt: activeMatch ? Date.now() : undefined,
-                handoverCode: activeMatch ? handoverCode : undefined,
-                createdAt: Date.now(),
-              };
 
-              await demandBoard.put(demandEntry);
+              if (matchingItems.length === 0) {
+                const demandId = `demand_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+                const demandEntry: DemandItem = {
+                  demandId,
+                  userPhone: payload.from_phone,
+                  requestedQuery: item.title,
+                  concept: item.concept,
+                  domain: item.domain,
+                  status: 'pending',
+                  preferredLang: demandLang,
+                  createdAt: Date.now(),
+                };
+                await demandBoard.put(demandEntry);
 
-              if (activeMatch) {
-                // Put matched book in 48-Hour Reserved Hold
-                const reservedUntil = Date.now() + 48 * 60 * 60 * 1000;
-                await activeInventory.put({
-                  ...activeMatch,
-                  status: 'reserved',
-                  reservedUntil,
-                  reservedForPhone: payload.from_phone,
-                  matchedDemandId: demandId,
+                const postedMsg = await generateLLMMessage('demand_posted', { title: item.title, lang: demandLang });
+                await sendWhatsAppTextMessage(payload.from_phone, postedMsg);
+                lastReplyMessage = postedMsg;
+                overallStatus = 'processed';
+                return demandId;
+              }
+
+              // Group matching inventory by sellerPhone to match with all distinct parents
+              const itemsBySeller = new Map<string, (typeof allInventory)[number][]>();
+              for (const match of matchingItems) {
+                const existing = itemsBySeller.get(match.sellerPhone) || [];
+                existing.push(match);
+                itemsBySeller.set(match.sellerPhone, existing);
+              }
+
+              const reservedUntil = Date.now() + 48 * 60 * 60 * 1000;
+              let primaryDemandId: string | undefined;
+
+              for (const [sellerPhone, sellerItems] of itemsBySeller.entries()) {
+                const demandId = `demand_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+                if (!primaryDemandId) primaryDemandId = demandId;
+                const handoverCode = Math.floor(1000 + Math.random() * 9000).toString();
+                const representativeItem = sellerItems[0];
+                const sellerLang: 'en' | 'fr' = representativeItem.preferredLang === 'fr' ? 'fr' : 'en';
+
+                // Reserve all matching books from this seller
+                for (const book of sellerItems) {
+                  await activeInventory.put({
+                    ...book,
+                    status: 'reserved',
+                    reservedUntil,
+                    reservedForPhone: payload.from_phone,
+                    matchedDemandId: demandId,
+                    handoverCode,
+                    preferredLang: book.preferredLang || 'en',
+                  });
+                }
+
+                const combinedTitle = sellerItems.length > 1
+                  ? sellerItems.map((b) => b.title).join(', ')
+                  : representativeItem.title;
+
+                const demandEntry: DemandItem = {
+                  demandId,
+                  userPhone: payload.from_phone,
+                  requestedQuery: item.title,
+                  concept: item.concept,
+                  domain: item.domain,
+                  status: 'matched',
+                  preferredLang: demandLang,
+                  matchedItemId: representativeItem.itemId,
+                  matchedAt: Date.now(),
                   handoverCode,
-                });
+                  createdAt: Date.now(),
+                };
+                await demandBoard.put(demandEntry);
 
                 emitLifecycleEvent('MatchFound', {
                   demandId,
                   userPhone: payload.from_phone,
                   matchedConcept: item.concept,
-                  matchedItemId: activeMatch.itemId,
+                  matchedItemId: representativeItem.itemId,
+                  sellerPhone,
                   handoverCode,
                   reservedUntil,
                 });
-                overallStatus = 'matched';
-                lastMatchedDemandId = demandId;
                 metrics.emit('DemandMatchedCount', 1, { unit: 'Count' });
 
-                // Asymmetric language routing: Buyer in buyer's lang, Seller in seller's lang
-                const buyerLang: 'en' | 'fr' = item.lang === 'fr' ? 'fr' : 'en';
-                const sellerLang: 'en' | 'fr' = activeMatch.preferredLang === 'fr' ? 'fr' : 'en';
-
-                const buyerMsg = await generateLLMMessage('match_buyer', {
-                  title: item.title,
-                  phone: activeMatch.sellerPhone,
-                  handoverCode,
-                  lang: buyerLang,
-                });
+                // Notify seller
                 const sellerMsg = await generateLLMMessage('match_seller', {
-                  title: item.title,
+                  title: combinedTitle,
                   phone: payload.from_phone,
                   handoverCode,
                   lang: sellerLang,
                 });
+                await sendWhatsAppTextMessage(sellerPhone, sellerMsg);
+
+                // Notify buyer about this parent
+                const buyerMsg = await generateLLMMessage('match_buyer', {
+                  title: combinedTitle,
+                  phone: sellerPhone,
+                  handoverCode,
+                  lang: demandLang,
+                });
                 await sendWhatsAppTextMessage(payload.from_phone, buyerMsg);
-                await sendWhatsAppTextMessage(activeMatch.sellerPhone, sellerMsg);
-              } else {
-                const postedMsg = await generateLLMMessage('demand_posted', { title: item.title, lang: demandLang });
-                await sendWhatsAppTextMessage(payload.from_phone, postedMsg);
+                lastReplyMessage = buyerMsg;
               }
 
-              return demandId;
+              overallStatus = 'matched';
+              lastMatchedDemandId = primaryDemandId;
+              return primaryDemandId;
             });
           });
         } else {
@@ -1573,8 +1795,12 @@ export function getHelpMessage(lang: 'en' | 'fr' = 'en'): string {
 }
 
 export function formatPhoneNumber(phone: string): { display: string; cleanDigits: string } {
-  const cleanDigits = (phone || '').replace(/\D/g, '');
-  const display = phone?.startsWith('+') ? phone : (phone ? `+${phone}` : '');
+  const unmasked = (phone || '')
+    .replace(/\[(?:PHONE_)?REDACTED\]/gi, '')
+    .replace(/\+?X+\d*\s*\(redacted\)/gi, '')
+    .trim();
+  const cleanDigits = unmasked.replace(/\D/g, '');
+  const display = unmasked.startsWith('+') ? unmasked : (unmasked ? `+${unmasked}` : '');
   return { display, cleanDigits };
 }
 
@@ -1781,13 +2007,7 @@ export async function generateLLMMessage(
 
       const text = response.output?.message?.content?.[0]?.text?.trim();
       if (text) {
-        // Restore real phone number in output if redacted
-        if (params.phone) {
-          return text
-            .replace(/\[PHONE_REDACTED\]/gi, params.phone)
-            .replace(/\+\d+\s*\(redacted\)/gi, params.phone);
-        }
-        return text;
+        return ensureUnredactedMessage(text, params.phone);
       }
     } catch (err: any) {
       if (err?.$metadata?.httpStatusCode === 429) {
@@ -1808,12 +2028,7 @@ export async function generateLLMMessage(
 
       const text = response.output?.message?.content?.[0]?.text?.trim();
       if (text) {
-        if (params.phone) {
-          return text
-            .replace(/\[PHONE_REDACTED\]/gi, params.phone)
-            .replace(/\+\d+\s*\(redacted\)/gi, params.phone);
-        }
-        return text;
+        return ensureUnredactedMessage(text, params.phone);
       }
     }
 
@@ -2340,6 +2555,152 @@ export function cleanSubjectName(rawSubject: string, lang: 'en' | 'fr' = 'en'): 
   return stripped.charAt(0).toUpperCase() + stripped.slice(1);
 }
 
+/**
+ * Normalizes a school year grade from concept, title, or message text.
+ * Returns standard format 'Year<N>' (e.g. 'Year9', 'Year10') or French equivalence ('Year9' for 4ème).
+ */
+export function extractSchoolYear(concept?: string, title?: string, text?: string): string | null {
+  const combined = `${concept || ''} ${title || ''} ${text || ''}`.replace(/<[^>]+>/g, ' ');
+
+  // 1. Explicit Year/Année/Grade/Classe + number (e.g. "Year 9", "Année 9", "Grade 9", "Year9")
+  const m = combined.match(/(?:Year|Année|Grade|Classe(?:\s+de)?)\s*(\d{1,2})\b/i) || combined.match(/\bYear(\d{1,2})\b/i);
+  if (m) {
+    return `Year${m[1]}`;
+  }
+
+  // 2. French school levels (Collège / Lycée)
+  if (/\b(?:6[èe]me|6eme)\b/i.test(combined)) return 'Year7';
+  if (/\b(?:5[èe]me|5eme)\b/i.test(combined)) return 'Year8';
+  if (/\b(?:4[èe]me|4eme)\b/i.test(combined)) return 'Year9';
+  if (/\b(?:3[èe]me|3eme)\b/i.test(combined)) return 'Year10';
+  if (/\b(?:2nde|seconde)\b/i.test(combined)) return 'Year11';
+  if (/\b(?:1[èe]re|premiere)\b/i.test(combined)) return 'Year12';
+  if (/\bterminale\b/i.test(combined)) return 'Year13';
+
+  // 3. Fallback: match Year\d{1,2} in concept string without word boundaries (e.g. Year9Biology, Year9Year9Year9Books)
+  const conceptYear = (concept || '').match(/Year(\d{1,2})/i);
+  if (conceptYear) {
+    return `Year${conceptYear[1]}`;
+  }
+
+  return null;
+}
+
+/**
+ * Extracts normalized subject name or returns null if it is a general school year request / bundle.
+ */
+export function extractSubject(concept?: string, title?: string, text?: string): string | null {
+  const combined = `${concept || ''} ${title || ''} ${text || ''}`.replace(/<[^>]+>/g, ' ');
+
+  // 1. Check against specific subject definitions in SUBJECT_CATALOG
+  for (const def of SUBJECT_CATALOG) {
+    if (def.en === 'General Textbooks') continue;
+    if (def.patterns.some((pattern) => pattern.test(combined))) {
+      return def.en;
+    }
+  }
+
+  // 2. Inspect concept string if it contains a specific subject after Year\d{1,2}
+  const cleanConcept = (concept || '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/(?:Year\d{1,2}|General)+/gi, '')
+    .trim();
+
+  if (cleanConcept && !/^(?:Books?|Textbooks?|Livres?|Manuels?|SchoolBooks?|General.*)$/i.test(cleanConcept)) {
+    const candidate = cleanSubjectName(cleanConcept, 'en');
+    if (candidate && candidate !== 'General Textbooks') {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Matches a book demand against an inventory item.
+ *
+ * Rules:
+ * 1. Direct concept key match (e.g. Year9Biology === Year9Biology) -> Match!
+ * 2. If both specify school years and the years differ (e.g. Year 9 vs Year 10) -> NO Match.
+ * 3. If school years match (e.g. Year 9 == Year 9):
+ *    - If demand does NOT specify a subject (e.g. "Looking for year 9 book") -> MATCH ALL Year 9 books!
+ *    - If inventory is a general year bundle (e.g. "Books for Year 9") -> MATCH ANY subject for that year!
+ *    - If both specify subjects: Match if same subject or Science umbrella (Science <-> Biology/Physics/Chemistry).
+ * 4. If neither specifies a school year: Match if subjects or normalized concepts match.
+ */
+export function isMatchingItem(
+  demand: { concept?: string; requestedQuery?: string; title?: string; [key: string]: any },
+  inventory: { concept?: string; title?: string; description?: string; [key: string]: any }
+): boolean {
+  const normDemand = normalizeConceptKey(demand.concept, demand.requestedQuery || demand.title);
+  const normInventory = normalizeConceptKey(inventory.concept, inventory.title);
+
+  // Exact concept match (e.g. Year9Biology === Year9Biology)
+  if (normDemand === normInventory && !normDemand.startsWith('General')) {
+    return true;
+  }
+
+  const demandYear = extractSchoolYear(demand.concept, demand.requestedQuery || demand.title);
+  const invYear = extractSchoolYear(inventory.concept, inventory.title, inventory.description);
+
+  // Different school years -> never match
+  if (demandYear && invYear && demandYear !== invYear) {
+    return false;
+  }
+
+  // Same school year -> match general demands to all parents / subjects!
+  if (demandYear && invYear && demandYear === invYear) {
+    const demandSub = extractSubject(demand.concept, demand.requestedQuery || demand.title);
+    const invSub = extractSubject(inventory.concept, inventory.title, inventory.description);
+
+    // If demand does not specify a subject (e.g. "looking for year 9 book"), match ANY book for that year!
+    if (!demandSub) {
+      return true;
+    }
+
+    // If inventory is a general bundle for that year (e.g. "Books for Year 9"), matches any subject request
+    if (!invSub) {
+      return true;
+    }
+
+    // Both specified subjects
+    if (demandSub === invSub) {
+      return true;
+    }
+
+    // Science umbrella match (Science <-> Biology/Chemistry/Physics)
+    const scienceSubtypes = ['Biology', 'Physics', 'Chemistry'];
+    if (
+      (demandSub === 'Science' && scienceSubtypes.includes(invSub)) ||
+      (invSub === 'Science' && scienceSubtypes.includes(demandSub))
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  // Neither specifies a school year
+  if (!demandYear && !invYear) {
+    const demandSub = extractSubject(demand.concept, demand.requestedQuery || demand.title);
+    const invSub = extractSubject(inventory.concept, inventory.title, inventory.description);
+    if (demandSub && invSub) {
+      if (demandSub === invSub) return true;
+      const scienceSubtypes = ['Biology', 'Physics', 'Chemistry'];
+      if (
+        (demandSub === 'Science' && scienceSubtypes.includes(invSub)) ||
+        (invSub === 'Science' && scienceSubtypes.includes(demandSub))
+      ) {
+        return true;
+      }
+    }
+    return normDemand === normInventory && !normDemand.startsWith('General');
+  }
+
+  return false;
+}
+
+
 export function formatDemandDisplay(
   demand: { concept?: string; requestedQuery?: string; domain?: string; [key: string]: any },
   lang: 'en' | 'fr'
@@ -2566,6 +2927,130 @@ export function buildInteractiveCatalogPayload(
   };
 }
 
+/**
+ * Builds Meta Interactive List payload for the overflow grades ("Other Grades" / "Autres Classes")
+ * allowing parents to drill down into Year 11, Year 12, Year 13, etc. without truncating inventory.
+ */
+export function buildInteractiveOtherGradesPayload(
+  activeBooks: Array<{ title: string; concept?: string; conditionType?: string; domain?: string; [key: string]: any }>,
+  lang: 'en' | 'fr' = 'en'
+): WhatsAppInteractiveListPayload {
+  const yearGroups: Record<
+    string,
+    { yearNum: number; count: number; subjects: string[] }
+  > = {};
+
+  for (const book of activeBooks) {
+    const rawTitle = book.title || '';
+    const match = rawTitle.match(/(?:Books for Year|Livres pour l'année|Year|Année)\s*(\d{1,2})(.*)/i);
+
+    let yearLabel: string;
+    let yearNum: number;
+    let rawSubject: string;
+
+    if (match) {
+      yearNum = parseInt(match[1], 10);
+      rawSubject = match[2];
+      yearLabel = lang === 'fr' ? `Année ${yearNum}` : `Year ${yearNum}`;
+    } else {
+      yearNum = 999;
+      yearLabel = lang === 'fr' ? 'Général' : 'General';
+      rawSubject = rawTitle;
+    }
+
+    const displaySubject = cleanSubjectName(rawSubject, lang);
+    if (!yearGroups[yearLabel]) {
+      yearGroups[yearLabel] = { yearNum, count: 0, subjects: [] };
+    }
+    yearGroups[yearLabel].count += 1;
+    if (!yearGroups[yearLabel].subjects.includes(displaySubject)) {
+      yearGroups[yearLabel].subjects.push(displaySubject);
+    }
+  }
+
+  const sortedYears = Object.keys(yearGroups).sort((a, b) => {
+    return yearGroups[a].yearNum - yearGroups[b].yearNum;
+  });
+
+  const remainingYears = sortedYears.slice(9);
+  const targetYears = remainingYears.length > 0 ? remainingYears : sortedYears;
+  const remainingCount = targetYears.reduce((sum, y) => sum + yearGroups[y].count, 0);
+
+  const rows: WhatsAppInteractiveRow[] = [];
+  const maxRows = Math.min(targetYears.length, 10);
+
+  for (let i = 0; i < maxRows; i++) {
+    const year = targetYears[i];
+    const g = yearGroups[year];
+    const subjectsPreview = g.subjects.slice(0, 3).join(', ');
+    const moreCount = g.subjects.length > 3 ? '…' : '';
+    const booksLabel = lang === 'fr' ? (g.count > 1 ? 'livres' : 'livre') : (g.count > 1 ? 'books' : 'book');
+    const desc = `${g.count} ${booksLabel} • ${subjectsPreview}${moreCount}`;
+    const cleanYear = year.replace(/[^a-zA-Z0-9_]/g, '');
+    rows.push({
+      id: `browse_year_${cleanYear}`,
+      title: truncateWhatsAppText(year, 24),
+      description: truncateWhatsAppText(desc, 72),
+    });
+  }
+
+  const headerText =
+    lang === 'fr'
+      ? truncateWhatsAppText(`📚 Autres Classes (${remainingCount} livres)`, 60)
+      : truncateWhatsAppText(`📚 Other Grades (${remainingCount} books)`, 60);
+
+  const gradeBullets = targetYears
+    .map((y) => {
+      const g = yearGroups[y];
+      const booksLabel = lang === 'fr' ? (g.count > 1 ? 'livres' : 'livre') : (g.count > 1 ? 'books' : 'book');
+      return `• *${y}* (${g.count} ${booksLabel})`;
+    })
+    .join('\n');
+
+  const bodyText =
+    lang === 'fr'
+      ? `${remainingCount} livres disponibles dans les autres classes :\n${gradeBullets}\n\n👇 Appuyez sur *Choisir classe* ci-dessous pour explorer :`
+      : `${remainingCount} books available across other grades:\n${gradeBullets}\n\n👇 Tap *Select Grade* below to browse:`;
+
+  const footerText =
+    lang === 'fr'
+      ? truncateWhatsAppText('Relay • Échange Scolaire Simplifié', 60)
+      : truncateWhatsAppText('Relay • 1-Tap Community Exchange', 60);
+
+  const buttonText =
+    lang === 'fr'
+      ? truncateWhatsAppText('📚 Choisir classe', 20)
+      : truncateWhatsAppText('📚 Select Grade', 20);
+
+  const sectionTitle =
+    lang === 'fr'
+      ? truncateWhatsAppText('Autres Classes', 24)
+      : truncateWhatsAppText('Other Grades', 24);
+
+  return {
+    type: 'list',
+    header: {
+      type: 'text',
+      text: headerText,
+    },
+    body: {
+      text: truncateWhatsAppText(bodyText, 1024),
+    },
+    footer: {
+      text: footerText,
+    },
+    action: {
+      button: buttonText,
+      sections: [
+        {
+          title: sectionTitle,
+          rows,
+        },
+      ],
+    },
+  };
+}
+
 export function buildInteractiveYearSubjectsPayload(
   yearLabel: string,
   activeBooks: Array<{ title: string; concept?: string; conditionType?: string; domain?: string; [key: string]: any }>,
@@ -2573,7 +3058,8 @@ export function buildInteractiveYearSubjectsPayload(
 ): WhatsAppInteractiveListPayload {
   const yearNumMatch = yearLabel.match(/\d{1,2}/);
   const targetYearNum = yearNumMatch ? parseInt(yearNumMatch[0], 10) : null;
-  const isOther = /other|autre|g[ée]n[ée]ral/i.test(yearLabel);
+  const isGeneral = /g[ée]n[ée]ral/i.test(yearLabel);
+  const isOther = /other|autre/i.test(yearLabel);
 
   const matchingBooks = activeBooks.filter((book) => {
     const rawTitle = book.title || '';
@@ -2586,8 +3072,13 @@ export function buildInteractiveYearSubjectsPayload(
       }
       return false;
     }
-    if (isOther) {
+    if (isGeneral) {
       return !match;
+    }
+    if (isOther) {
+      if (!match) return true;
+      const num = parseInt(match[1], 10);
+      return num > 9;
     }
     return rawTitle.toLowerCase().includes(yearLabel.toLowerCase()) || rawConcept.toLowerCase().includes(yearLabel.toLowerCase());
   });
@@ -2605,7 +3096,10 @@ export function buildInteractiveYearSubjectsPayload(
     if (!rawSubject || rawSubject.trim() === '') {
       rawSubject = rawConcept.replace(/^(?:Year\d{1,2}|General)/i, '') || rawTitle;
     }
-    const displaySubject = cleanSubjectName(rawSubject, lang);
+    let displaySubject = cleanSubjectName(rawSubject, lang);
+    if (isOther && match) {
+      displaySubject = `${displaySubject} (${lang === 'fr' ? `Année ${match[1]}` : `Year ${match[1]}`})`;
+    }
     const key = displaySubject.toLowerCase();
 
     if (!subjectsMap[key]) {
@@ -2663,7 +3157,7 @@ export function buildInteractiveYearSubjectsPayload(
 
   const displayYear = targetYearNum !== null
     ? (lang === 'fr' ? `Année ${targetYearNum}` : `Year ${targetYearNum}`)
-    : yearLabel;
+    : (isGeneral ? (lang === 'fr' ? 'Général' : 'General') : (isOther ? (lang === 'fr' ? 'Autres Classes' : 'Other Grades') : yearLabel));
 
   const headerText =
     lang === 'fr'
@@ -2875,6 +3369,208 @@ export function buildGroupedCatalogText(
   return parts.join('\n');
 }
 
+/**
+ * Builds a comprehensive, bilingual WhatsApp summary of all books a parent has:
+ * 1. Added for sale (active inventory)
+ * 2. In progress / reserved (holding 48h as buyer or seller)
+ * 3. Sold (completed sales)
+ * 4. Bought / Acquired (completed purchases)
+ * 5. Demanded (open or matched wishlist entries)
+ */
+export async function buildParentActivitySummary(
+  phone: string,
+  lang: 'en' | 'fr' = 'en'
+): Promise<string> {
+  const userClean = (phone || '').replace(/\D/g, '');
+  const isPhoneMatch = (p?: string) => {
+    if (!p) return false;
+    const pClean = p.replace(/\D/g, '');
+    if (!pClean || !userClean) return false;
+    if (pClean === userClean) return true;
+    if (pClean.length >= 8 && userClean.length >= 8) {
+      return pClean.endsWith(userClean) || userClean.endsWith(pClean);
+    }
+    return false;
+  };
+
+  const [allInventory, allDemands] = await Promise.all([
+    Array.fromAsync(activeInventory.scan()),
+    Array.fromAsync(demandBoard.scan()),
+  ]);
+
+  const now = Date.now();
+
+  // 1. Added / Listed by this parent (Active)
+  const added = allInventory.filter(
+    (i) => isPhoneMatch(i.sellerPhone) && (i.status === 'active' || (i.status === 'reserved' && i.reservedUntil && i.reservedUntil < now))
+  );
+
+  // 2. In Progress / Reserved (Holding for 48h)
+  const reservedAsSeller = allInventory.filter(
+    (i) => isPhoneMatch(i.sellerPhone) && i.status === 'reserved' && (!i.reservedUntil || i.reservedUntil > now)
+  );
+  const reservedAsBuyer = allInventory.filter(
+    (i) => isPhoneMatch(i.reservedForPhone) && i.status === 'reserved' && (!i.reservedUntil || i.reservedUntil > now)
+  );
+
+  // 3. Sold by this parent
+  const sold = allInventory.filter(
+    (i) => isPhoneMatch(i.sellerPhone) && i.status === 'sold'
+  );
+
+  // 4. Bought / Acquired by this parent
+  const bought = allInventory.filter(
+    (i) => (isPhoneMatch(i.soldToPhone) || isPhoneMatch(i.reservedForPhone)) && i.status === 'sold' && !isPhoneMatch(i.sellerPhone)
+  );
+
+  // 5. Demanded / Wishlist entries
+  const demanded = allDemands.filter((d) => isPhoneMatch(d.userPhone));
+
+  const totalActivities = added.length + reservedAsSeller.length + reservedAsBuyer.length + sold.length + bought.length + demanded.length;
+
+  const { display } = formatPhoneNumber(phone);
+
+  if (totalActivities === 0) {
+    return lang === 'fr'
+      ? [
+          `📚 *Résumé de votre compte* (${display})`,
+          '',
+          "Vous n'avez pas encore de livres en vente, vendus, achetés ou demandés.",
+          '',
+          '💡 *Pour commencer :*',
+          '• Partagez un livre : envoyez une photo ou écrivez *"J\'ai [Titre/Classe]"*',
+          '• Demandez un livre : écrivez *"Je cherche [Titre/Classe]"*',
+          '• Parcourez les livres disponibles : écrivez *"catalogue"*',
+        ].join('\n')
+      : [
+          `📚 *Your Account & Activity Summary* (${display})`,
+          '',
+          'You do not have any books listed, sold, bought, or requested yet.',
+          '',
+          '💡 *Get started:*',
+          '• Share a book: send a photo or type *"I have [Title/Grade]"*',
+          '• Request a book: type *"Looking for [Title/Grade]"*',
+          '• Browse available books: type *"catalog"*',
+        ].join('\n');
+  }
+
+  const sections: string[] = [];
+
+  if (lang === 'fr') {
+    sections.push(`📚 *Résumé de vos Livres & Activités* (${display})`);
+
+    // 1. En vente
+    if (added.length > 0) {
+      const items = added.map((b) => `• *${b.title}* (${b.conditionType || 'Bon état'})`).join('\n');
+      sections.push(`\n📖 *Livres en vente (${added.length}) :*\n${items}`);
+    }
+
+    // 2. Réservés / En cours
+    if (reservedAsSeller.length > 0 || reservedAsBuyer.length > 0) {
+      const resItems: string[] = [];
+      for (const b of reservedAsSeller) {
+        const buyerContact = b.reservedForPhone ? formatPhoneNumber(b.reservedForPhone).display : 'Acheteur';
+        const code = b.handoverCode ? ` | Code: #${b.handoverCode}` : '';
+        resItems.push(`• 📤 *${b.title}* — Réservé pour ${buyerContact}${code}`);
+      }
+      for (const b of reservedAsBuyer) {
+        const sellerContact = b.sellerPhone ? formatPhoneNumber(b.sellerPhone).display : 'Vendeur';
+        const code = b.handoverCode ? ` | Code: #${b.handoverCode}` : '';
+        resItems.push(`• 📥 *${b.title}* — Réservé pour vous auprès de ${sellerContact}${code}`);
+      }
+      sections.push(`\n⏳ *Échanges en cours (${reservedAsSeller.length + reservedAsBuyer.length}) :*\n${resItems.join('\n')}\n_Répondez "Vendu" une fois l'échange terminé._`);
+    }
+
+    // 3. Vendus
+    if (sold.length > 0) {
+      const items = sold.map((b) => {
+        const to = b.soldToPhone ? ` à ${formatPhoneNumber(b.soldToPhone).display}` : '';
+        return `• ✅ *${b.title}*${to}`;
+      }).join('\n');
+      sections.push(`\n🤝 *Livres vendus (${sold.length}) :*\n${items}`);
+    }
+
+    // 4. Achetés / Reçus
+    if (bought.length > 0) {
+      const items = bought.map((b) => {
+        const from = b.sellerPhone ? ` auprès de ${formatPhoneNumber(b.sellerPhone).display}` : '';
+        return `• 🎉 *${b.title}*${from}`;
+      }).join('\n');
+      sections.push(`\n🎓 *Livres obtenus / achetés (${bought.length}) :*\n${items}`);
+    }
+
+    // 5. Demandes
+    if (demanded.length > 0) {
+      const items = demanded.map((d) => {
+        let statusText = '⏳ En attente';
+        if (d.status === 'matched') statusText = d.handoverCode ? `🤝 Réservé (Code: #${d.handoverCode})` : '🤝 Réservé';
+        else if (d.status === 'fulfilled') statusText = '✅ Finalisé';
+        return `• *${d.requestedQuery || d.concept}* [${statusText}]`;
+      }).join('\n');
+      sections.push(`\n📋 *Livres recherchés (${demanded.length}) :*\n${items}`);
+    }
+
+    sections.push('\n💡 *Commandes utiles :* Envoyez "catalogue" pour explorer ou décrivez un livre pour le publier !');
+  } else {
+    sections.push(`📚 *Your Books & Activity Summary* (${display})`);
+
+    // 1. On sale
+    if (added.length > 0) {
+      const items = added.map((b) => `• *${b.title}* (${b.conditionType || 'Good condition'})`).join('\n');
+      sections.push(`\n📖 *Books on Sale (${added.length}) :*\n${items}`);
+    }
+
+    // 2. Reserved
+    if (reservedAsSeller.length > 0 || reservedAsBuyer.length > 0) {
+      const resItems: string[] = [];
+      for (const b of reservedAsSeller) {
+        const buyerContact = b.reservedForPhone ? formatPhoneNumber(b.reservedForPhone).display : 'Buyer';
+        const code = b.handoverCode ? ` | Code: #${b.handoverCode}` : '';
+        resItems.push(`• 📤 *${b.title}* — Reserved for ${buyerContact}${code}`);
+      }
+      for (const b of reservedAsBuyer) {
+        const sellerContact = b.sellerPhone ? formatPhoneNumber(b.sellerPhone).display : 'Seller';
+        const code = b.handoverCode ? ` | Code: #${b.handoverCode}` : '';
+        resItems.push(`• 📥 *${b.title}* — Reserved for you from ${sellerContact}${code}`);
+      }
+      sections.push(`\n⏳ *Exchanges in Progress (${reservedAsSeller.length + reservedAsBuyer.length}) :*\n${resItems.join('\n')}\n_Reply "Sold" once the handover is complete._`);
+    }
+
+    // 3. Sold
+    if (sold.length > 0) {
+      const items = sold.map((b) => {
+        const to = b.soldToPhone ? ` to ${formatPhoneNumber(b.soldToPhone).display}` : '';
+        return `• ✅ *${b.title}*${to}`;
+      }).join('\n');
+      sections.push(`\n🤝 *Books Sold (${sold.length}) :*\n${items}`);
+    }
+
+    // 4. Bought
+    if (bought.length > 0) {
+      const items = bought.map((b) => {
+        const from = b.sellerPhone ? ` from ${formatPhoneNumber(b.sellerPhone).display}` : '';
+        return `• 🎉 *${b.title}*${from}`;
+      }).join('\n');
+      sections.push(`\n🎓 *Books Acquired / Bought (${bought.length}) :*\n${items}`);
+    }
+
+    // 5. Demands
+    if (demanded.length > 0) {
+      const items = demanded.map((d) => {
+        let statusText = '⏳ Searching';
+        if (d.status === 'matched') statusText = d.handoverCode ? `🤝 Reserved (Code: #${d.handoverCode})` : '🤝 Reserved';
+        else if (d.status === 'fulfilled') statusText = '✅ Completed';
+        return `• *${d.requestedQuery || d.concept}* [${statusText}]`;
+      }).join('\n');
+      sections.push(`\n📋 *Books Requested / Wishlist (${demanded.length}) :*\n${items}`);
+    }
+
+    sections.push('\n💡 *Helpful tips:* Send "catalog" to browse available books or send a photo to list more!');
+  }
+
+  return sections.join('\n');
+}
+
 export interface WebhookProcessingResult {
   status: 'processed' | 'matched' | 'added_to_inventory' | 'greeting' | 'spam' | 'needs_year_clarification';
   itemId?: string;
@@ -2936,7 +3632,7 @@ Key Behaviors & Capabilities:
           concept: m.concept,
           domain: m.domain,
           condition: m.conditionType,
-          sellerPhone: m.sellerPhone.slice(0, 4) + '****' + m.sellerPhone.slice(-3),
+          sellerPhone: m.sellerPhone,
         }));
       },
     }),
@@ -2959,7 +3655,7 @@ Key Behaviors & Capabilities:
           requestedQuery: d.requestedQuery,
           concept: d.concept,
           domain: d.domain,
-          userPhone: d.userPhone.slice(0, 4) + '****' + d.userPhone.slice(-3),
+          userPhone: d.userPhone,
         }));
       },
     }),
@@ -3306,6 +4002,13 @@ Vous avez des livres ? Répondez avec des photos pour aider les parents en atten
       }
     }
     return { success: true, ...payload };
+  },
+
+  /**
+   * 15. Retrieve Parent Activity Summary (Added, In Progress / Reserved, Sold, Bought, Demanded)
+   */
+  async getParentActivity(phone: string, lang: 'en' | 'fr' = 'en') {
+    return await buildParentActivitySummary(phone, lang);
   },
 
   /** Security & Observability System Status */

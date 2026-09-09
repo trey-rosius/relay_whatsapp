@@ -1,0 +1,574 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-09-08T11:15:00.000Z" agent="Mozilla/5.0" version="24.7.5">
+  <diagram id="relay-lambda-durable-architecture" name="AWS Lambda Durable Functionality">
+    <mxGraphModel dx="2800" dy="1700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2700" pageHeight="1600" background="#0a0f1d" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ==================== TOP BANNER ==================== -->
+        <mxCell id="banner_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#111827;strokeColor=#1f2937;strokeWidth=2;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="30" y="25" width="2640" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="banner_text" value="&lt;font style=&quot;font-size: 22px; font-weight: 800; color: #38bdf8;&quot;&gt;AWS LAMBDA DURABLE FUNCTION ARCHITECTURE &amp;bull; withDurableExecution&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px; color: #94a3b8; font-weight: 500;&quot;&gt;Deterministic Step Memoization &amp;bull; Idempotent Multi-Intent Orchestration &amp;bull; State Checkpointing &amp;bull; X-Ray Tracing &amp;bull; CloudWatch EMF Metrics&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="2620" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== COLUMN 1: INGRESS & INVOCATION CONTEXT ==================== -->
+        <mxCell id="col1_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0f172a;strokeColor=#1e293b;strokeWidth=2;arcSize=3;" vertex="1" parent="1">
+          <mxGeometry x="30" y="115" width="410" height="1440" as="geometry" />
+        </mxCell>
+        <mxCell id="col1_hdr" value="&lt;b&gt;1. Invocations &amp;amp; Execution Context&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#334155;fontColor=#38bdf8;fontSize=15;align=center;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="45" y="130" width="380" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Node 1.1: Webhook Inbound Payload -->
+        <mxCell id="c1_payload" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#3b82f6;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="45" y="190" width="380" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_payload" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#38bdf8;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.mobile_client;" vertex="1" parent="1">
+          <mxGeometry x="60" y="223" width="45" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_payload" value="&lt;b style=&quot;font-size: 13px; color: #f8fafc;&quot;&gt;WhatsAppInboundPayload Ingress&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #94a3b8;&quot;&gt;&amp;bull; &lt;b&gt;from_phone:&lt;/b&gt; Parent WhatsApp E.164 number&lt;br&gt;&amp;bull; &lt;b&gt;message_text:&lt;/b&gt; Free-form curriculum query&lt;br&gt;&amp;bull; &lt;b&gt;media_id:&lt;/b&gt; Optional Meta cover image ID&lt;br&gt;&amp;bull; &lt;b&gt;interactive:&lt;/b&gt; Button tap / 2-Tier list reply ID&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="115" y="195" width="300" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- Node 1.2: Handler Invocation -->
+        <mxCell id="c1_handler" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#f59e0b;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="45" y="340" width="380" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_lambda" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#f59e0b;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.lambda;" vertex="1" parent="1">
+          <mxGeometry x="60" y="375" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_handler" value="&lt;b style=&quot;font-size: 13px; color: #fbbf24;&quot;&gt;processWhatsAppInbound Entry&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #cbd5e1;&quot;&gt;&amp;bull; Wrapped by &lt;b&gt;withDurableExecution&amp;lt;E, R&amp;gt;&lt;/b&gt;&lt;br&gt;&amp;bull; Receives &lt;b&gt;(payload, context)&lt;/b&gt;&lt;br&gt;&amp;bull; Provides resilient &lt;b&gt;context.step&amp;lt;T&amp;gt;()&lt;/b&gt;&lt;br&gt;&amp;bull; Starts overall latency timer (&lt;b&gt;startTime&lt;/b&gt;)&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="115" y="345" width="300" height="110" as="geometry" />
+        </mxCell>
+
+        <!-- Node 1.3: X-Ray Root Segment -->
+        <mxCell id="c1_xray" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0c4a6e;strokeColor=#0284c7;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="45" y="480" width="380" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_xray" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#0284c7;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.xray;" vertex="1" parent="1">
+          <mxGeometry x="60" y="515" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_xray" value="&lt;b style=&quot;font-size: 13px; color: #38bdf8;&quot;&gt;AWS X-Ray Root Workflow Segment&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #cbd5e1;&quot;&gt;&amp;bull; &lt;b&gt;tracer.startSegment(&#39;process_whatsapp_inbound_workflow&#39;)&lt;/b&gt;&lt;br&gt;&amp;bull; Parent trace span enclosing all sub-steps&lt;br&gt;&amp;bull; Automatically propagates trace headers&lt;br&gt;&amp;bull; Visualizes subsegments in AWS Console&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="115" y="485" width="300" height="110" as="geometry" />
+        </mxCell>
+
+        <!-- Node 1.4: Correlation Key & Annotations -->
+        <mxCell id="c1_reqid" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#818cf8;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="45" y="620" width="380" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_reqid" value="&lt;b style=&quot;font-size: 13px; color: #a5b4fc;&quot;&gt;Correlation ID &amp;amp; X-Ray Annotations&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #e2e8f0;&quot;&gt;&lt;b&gt;const reqId = payload.media_id ?&lt;br&gt;&amp;nbsp;&amp;nbsp;`${payload.media_id}_${Date.now()}` :&lt;br&gt;&amp;nbsp;&amp;nbsp;`req_${Date.now()}_${rand}`;&lt;/b&gt;&lt;br&gt;&amp;bull; &lt;b&gt;rootSegment.addAnnotation(&#39;requestId&#39;, reqId)&lt;/b&gt;&lt;br&gt;&amp;bull; &lt;b&gt;rootSegment.addAnnotation(&#39;fromPhoneLast4&#39;, ...)&lt;/b&gt;&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="55" y="625" width="360" height="115" as="geometry" />
+        </mxCell>
+
+        <!-- Node 1.5: Fast-Path Evaluator -->
+        <mxCell id="c1_fastpath" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#064e3b;strokeColor=#10b981;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="45" y="765" width="380" height="155" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_fastpath" value="&lt;b style=&quot;font-size: 13px; color: #34d399;&quot;&gt;Step 0: Fast-Path Short-Circuit Evaluator&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #d1fae5;&quot;&gt;&amp;bull; &lt;b&gt;Interactive Button/List Tap:&lt;/b&gt;&lt;br&gt;&amp;nbsp;&amp;nbsp;- `browse_year_*` &amp;rarr; Sends subject list drawer&lt;br&gt;&amp;nbsp;&amp;nbsp;- `show_catalog` &amp;rarr; Dispatches grade list drawer&lt;br&gt;&amp;nbsp;&amp;nbsp;- `request_concept_*` &amp;rarr; Dispatches 2-button card&lt;br&gt;&amp;nbsp;&amp;nbsp;- `cancel_request` &amp;rarr; Resets user flow&lt;br&gt;&amp;bull; &lt;b&gt;Contact Inquiry Filter:&lt;/b&gt;&lt;br&gt;&amp;nbsp;&amp;nbsp;- &quot;Which parent?&quot; / &quot;Quel parent ?&quot;&lt;br&gt;&amp;nbsp;&amp;nbsp;- Direct 48h active reservation lookup (No LLM!)&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="55" y="770" width="360" height="145" as="geometry" />
+        </mxCell>
+
+        <!-- Node 1.6: Year Clarification Prompt -->
+        <mxCell id="c1_clarification" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#78350f;strokeColor=#f59e0b;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="45" y="940" width="380" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_clarification" value="&lt;b style=&quot;font-size: 13px; color: #fbbf24;&quot;&gt;Conversational Year Clarification Guard&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #fef3c7;&quot;&gt;&amp;bull; Evaluates if school grade is missing from offer/demand&lt;br&gt;&amp;bull; If missing: sends polite bilingual clarification message&lt;br&gt;&amp;bull; Emits &lt;b&gt;YearClarificationRequested&lt;/b&gt; metric&lt;br&gt;&amp;bull; Halts step progression cleanly until grade provided&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="55" y="945" width="360" height="110" as="geometry" />
+        </mxCell>
+
+        <!-- Node 1.7: Overall Completion & Result -->
+        <mxCell id="c1_return" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#10b981;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="45" y="1080" width="380" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_return" value="&lt;b style=&quot;font-size: 13px; color: #4ade80;&quot;&gt;Typed Return: WebhookProcessingResult&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #e2e8f0;&quot;&gt;&amp;bull; &lt;b&gt;status:&lt;/b&gt; &#39;processed&#39; | &#39;matched&#39; | &#39;added_to_inventory&#39;&lt;br&gt;&amp;bull; &lt;b&gt;itemId:&lt;/b&gt; Newly created or matched inventory ID&lt;br&gt;&amp;bull; &lt;b&gt;matchedDemandId:&lt;/b&gt; Fulfilled demand ID&lt;br&gt;&amp;bull; &lt;b&gt;replyMessage:&lt;/b&gt; Final dispatched WhatsApp message&lt;br&gt;&amp;bull; &lt;b&gt;vectorChunksCount:&lt;/b&gt; Number of S3 chunks ingested&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="55" y="1085" width="360" height="130" as="geometry" />
+        </mxCell>
+
+
+        <!-- ==================== COLUMN 2: DURABLE RUNTIME ENGINE ==================== -->
+        <mxCell id="col2_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0f172a;strokeColor=#1e293b;strokeWidth=2;arcSize=3;" vertex="1" parent="1">
+          <mxGeometry x="460" y="115" width="500" height="1440" as="geometry" />
+        </mxCell>
+        <mxCell id="col2_hdr" value="&lt;b&gt;2. Durable Step Engine (withDurableExecution)&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#334155;fontColor=#38bdf8;fontSize=15;align=center;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="475" y="130" width="470" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Node 2.1: Higher-Order Wrapper Definition -->
+        <mxCell id="c2_wrapper" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e1b4b;strokeColor=#818cf8;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="475" y="190" width="470" height="175" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_wrapper" value="&lt;b style=&quot;font-size: 13px; color: #a5b4fc;&quot;&gt;Higher-Order Durable Wrapper Function&lt;/b&gt;&lt;br&gt;&lt;div style=&quot;font-family: monospace; font-size: 11px; color: #e0e7ff; background-color: #0f172a; padding: 6px; border-radius: 4px; margin-top: 4px;&quot;&gt;export interface DurableStepContext {&lt;br&gt;&amp;nbsp;&amp;nbsp;step&amp;lt;T&amp;gt;(name: string, fn: () =&amp;gt; Promise&amp;lt;T&amp;gt;): Promise&amp;lt;T&amp;gt;;&lt;br&gt;}&lt;br&gt;&lt;br&gt;export function withDurableExecution&amp;lt;E, R&amp;gt;(&lt;br&gt;&amp;nbsp;&amp;nbsp;handler: (event: E, context: DurableStepContext) =&amp;gt; Promise&amp;lt;R&amp;gt;&lt;br&gt;): (event: E) =&amp;gt; Promise&amp;lt;R&amp;gt; { ... }&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="485" y="195" width="450" height="165" as="geometry" />
+        </mxCell>
+
+        <!-- Node 2.2: In-Memory Memoization Map -->
+        <mxCell id="c2_map" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#38bdf8;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="475" y="385" width="470" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_map" value="&lt;b style=&quot;font-size: 13px; color: #38bdf8;&quot;&gt;In-Memory Step Memoization Store&lt;/b&gt;&lt;br&gt;&lt;div style=&quot;font-family: monospace; font-size: 11px; color: #38bdf8; background-color: #0f172a; padding: 6px; border-radius: 4px; margin-top: 4px;&quot;&gt;const executedSteps = new Map&amp;lt;string, any&amp;gt;();&lt;/div&gt;&lt;span style=&quot;font-size: 11px; color: #94a3b8;&quot;&gt;&amp;bull; Initialized fresh per top-level Lambda invocation&lt;br&gt;&amp;bull; Caches successful outputs indexed by deterministic step key&lt;br&gt;&amp;bull; Guarantees exactly-once execution per step boundary&lt;br&gt;&amp;bull; Zero external database query overhead during happy path&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="485" y="390" width="450" height="130" as="geometry" />
+        </mxCell>
+
+        <!-- Node 2.3: Step Context Interceptor Logic -->
+        <mxCell id="c2_interceptor" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#60a5fa;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="475" y="545" width="470" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_interceptor" value="&lt;b style=&quot;font-size: 13px; color: #93c5fd;&quot;&gt;Deterministic Step Context Execution Logic&lt;/b&gt;&lt;br&gt;&lt;div style=&quot;font-family: monospace; font-size: 11px; color: #e2e8f0; background-color: #0f172a; padding: 6px; border-radius: 4px; margin-top: 4px;&quot;&gt;async step&amp;lt;T&amp;gt;(name: string, fn: () =&amp;gt; Promise&amp;lt;T&amp;gt;): Promise&amp;lt;T&amp;gt; {&lt;br&gt;&amp;nbsp;&amp;nbsp;// 1. Check if step was already completed&lt;br&gt;&amp;nbsp;&amp;nbsp;if (executedSteps.has(name)) {&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;return executedSteps.get(name);&lt;br&gt;&amp;nbsp;&amp;nbsp;}&lt;br&gt;&amp;nbsp;&amp;nbsp;// 2. Execute target async operation&lt;br&gt;&amp;nbsp;&amp;nbsp;const result = await fn();&lt;br&gt;&amp;nbsp;&amp;nbsp;// 3. Checkpoint result into memoization map&lt;br&gt;&amp;nbsp;&amp;nbsp;executedSteps.set(name, result);&lt;br&gt;&amp;nbsp;&amp;nbsp;return result;&lt;br&gt;}&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="485" y="550" width="450" height="190" as="geometry" />
+        </mxCell>
+
+        <!-- Node 2.4: Deterministic Key Hierarchy -->
+        <mxCell id="c2_keys" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#a855f7;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="475" y="765" width="470" height="190" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_keys" value="&lt;b style=&quot;font-size: 13px; color: #c084fc;&quot;&gt;Deterministic Step Key Strategy (${action}-${reqId})&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #e2e8f0;&quot;&gt;Every step key is strictly scoped to &lt;b&gt;requestId&lt;/b&gt;, &lt;b&gt;sub-intent index&lt;/b&gt; &amp;amp; &lt;b&gt;concept&lt;/b&gt;:&lt;/span&gt;&lt;br&gt;&lt;div style=&quot;font-family: monospace; font-size: 10.5px; color: #e9d5ff; background-color: #0f172a; padding: 6px; border-radius: 4px; margin-top: 4px;&quot;&gt;&amp;bull; emit-processing-started-${reqId}&lt;br&gt;&amp;bull; fetch-media-${reqId}&lt;br&gt;&amp;bull; bedrock-vision-extraction-${reqId}&lt;br&gt;&amp;bull; emit-extraction-complete-${reqId}&lt;br&gt;&amp;bull; process-confirm-handover-${reqId}-${idx}&lt;br&gt;&amp;bull; process-catalog-${reqId}-${idx}&lt;br&gt;&amp;bull; process-demand-${reqId}-${idx}-${item.concept}&lt;br&gt;&amp;bull; query-demand-board-matching-${reqId}-${idx}-${item.concept}&lt;br&gt;&amp;bull; publish-active-inventory-${reqId}-${idx}-${item.concept}&lt;br&gt;&amp;bull; s3-vector-chunking-${reqId}-${idx}-${item.concept}&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="485" y="770" width="450" height="180" as="geometry" />
+        </mxCell>
+
+        <!-- Node 2.5: Crash-Replay Resilience Diagram -->
+        <mxCell id="c2_resilience" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#172554;strokeColor=#3b82f6;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="475" y="975" width="470" height="245" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_resilience" value="&lt;b style=&quot;font-size: 13px; color: #60a5fa;&quot;&gt;Fault Tolerance &amp;amp; Crash-Replay Resilience&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #bfdbfe;&quot;&gt;&amp;bull; &lt;b&gt;Problem:&lt;/b&gt; What if Meta API or Bedrock experiences transient throttling, network drops, or Lambda runtime timeout?&lt;br&gt;&amp;bull; &lt;b&gt;Traditional Lambda Risk:&lt;/b&gt; Handler re-executes from top, triggering duplicate WhatsApp outbound messages, duplicate DynamoDB records, and redundant $0.03 Bedrock calls.&lt;br&gt;&amp;bull; &lt;b&gt;Durable Step Guarantee:&lt;/b&gt;&lt;br&gt;&amp;nbsp;&amp;nbsp;1. Steps 1 through K-1 return instantly from cached memoization store.&lt;br&gt;&amp;nbsp;&amp;nbsp;2. Only failed Step K executes anew.&lt;br&gt;&amp;nbsp;&amp;nbsp;3. Zero duplicate messages dispatched to Meta Graph API.&lt;br&gt;&amp;nbsp;&amp;nbsp;4. Zero duplicate items inserted into DynamoDB.&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="485" y="980" width="450" height="235" as="geometry" />
+        </mxCell>
+
+
+        <!-- ==================== COLUMN 3: STEP PIPELINE & MULTI-INTENT BRANCHES ==================== -->
+        <mxCell id="col3_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0f172a;strokeColor=#1e293b;strokeWidth=2;arcSize=3;" vertex="1" parent="1">
+          <mxGeometry x="980" y="115" width="560" height="1440" as="geometry" />
+        </mxCell>
+        <mxCell id="col3_hdr" value="&lt;b&gt;3. Step Pipeline &amp;amp; Multi-Intent Branches&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#334155;fontColor=#38bdf8;fontSize=15;align=center;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="995" y="130" width="530" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Step 1: Processing Started -->
+        <mxCell id="step_1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#f97316;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="995" y="190" width="530" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_step1" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#f97316;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.eventbridge;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="213" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_step1" value="&lt;b style=&quot;font-size: 13px; color: #fb923c;&quot;&gt;DURABLE STEP: emit-processing-started-${reqId}&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #fed7aa;&quot;&gt;&amp;bull; &lt;b&gt;context.step(&#39;emit-processing-started-...&#39;, async () =&amp;gt; ...)&lt;/b&gt;&lt;br&gt;&amp;bull; Dispatches EventBridge lifecycle event: &lt;b&gt;ProcessingStarted&lt;/b&gt;&lt;br&gt;&amp;bull; Checkpoints request receipt timestamp &amp;amp; metadata&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="195" width="445" height="85" as="geometry" />
+        </mxCell>
+
+        <!-- Step 2: Fetch Media -->
+        <mxCell id="step_2" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#06b6d4;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="995" y="300" width="530" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_step2" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#06b6d4;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.xray;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="328" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_step2" value="&lt;b style=&quot;font-size: 13px; color: #22d3ee;&quot;&gt;DURABLE STEP: fetch-media-${reqId}&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #cffafe;&quot;&gt;&amp;bull; Wrapped with X-Ray subsegment: &lt;b&gt;&#39;step_fetch_media&#39;&lt;/b&gt;&lt;br&gt;&amp;bull; If &lt;b&gt;payload.media_id&lt;/b&gt;: queries Meta Graph API v25.0 with token&lt;br&gt;&amp;bull; Resolves download URL, MIME type &amp;amp; byte size (45 KB)&lt;br&gt;&amp;bull; If text-only: returns text payload without external network hop&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="305" width="445" height="95" as="geometry" />
+        </mxCell>
+
+        <!-- Step 3: Bedrock Vision & Text Extraction -->
+        <mxCell id="step_3" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#8b5cf6;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="995" y="420" width="530" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_step3" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#8b5cf6;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.bedrock;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="456" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_step3" value="&lt;b style=&quot;font-size: 13px; color: #c084fc;&quot;&gt;DURABLE STEP: bedrock-vision-extraction-${reqId}&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #ede9fe;&quot;&gt;&amp;bull; Wrapped with X-Ray subsegment: &lt;b&gt;&#39;step_bedrock_extraction&#39;&lt;/b&gt;&lt;br&gt;&amp;bull; Invokes &lt;b&gt;Amazon Bedrock Nova Lite &amp;amp; Claude 3.5 Sonnet&lt;/b&gt;&lt;br&gt;&amp;bull; Multimodal cover photo OCR &amp;amp; Syllabus decomposition&lt;br&gt;&amp;bull; Decomposes compound dual-intents (e.g. &quot;Have Y5, need Y6&quot;)&lt;br&gt;&amp;bull; Returns parsed &lt;b&gt;ExtractedIntentItem[]&lt;/b&gt; array&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="425" width="445" height="110" as="geometry" />
+        </mxCell>
+
+        <!-- Step 4: Extraction Complete Beacon -->
+        <mxCell id="step_4" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#f97316;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="995" y="555" width="530" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_step4" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#f97316;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.eventbridge;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="573" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_step4" value="&lt;b style=&quot;font-size: 13px; color: #fb923c;&quot;&gt;DURABLE STEP: emit-extraction-complete-${reqId}&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #fed7aa;&quot;&gt;&amp;bull; Emits EventBridge lifecycle event: &lt;b&gt;ExtractionComplete&lt;/b&gt;&lt;br&gt;&amp;bull; Payload contains &lt;b&gt;intentsCount&lt;/b&gt; and normalized concepts array&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="560" width="445" height="75" as="geometry" />
+        </mxCell>
+
+        <!-- Multi-Intent Loop Header -->
+        <mxCell id="loop_box" value="DYNAMIC INTENT BRANCHING LOOP: for (let idx = 0; idx &lt; intents.length; idx++)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#022c22;strokeColor=#10b981;fontColor=#6ee7b7;fontStyle=1;rounded=1;arcSize=6;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="995" y="655" width="530" height="570" as="geometry" />
+        </mxCell>
+
+        <!-- Branch A: Confirm Handover -->
+        <mxCell id="branch_a" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#10b981;strokeWidth=1.5;" vertex="1" parent="loop_box">
+          <mxGeometry x="15" y="35" width="500" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_branch_a" value="&lt;b style=&quot;font-size: 12px; color: #34d399;&quot;&gt;BRANCH A: process-confirm-handover-${reqId}-${idx}&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 10.5px; color: #e2e8f0;&quot;&gt;&amp;bull; Triggered by: &#39;Sold&#39;, &#39;Vendu&#39;, &#39;Remis&#39;, &#39;Got it&#39;&lt;br&gt;&amp;bull; Updates DynamoDB: &lt;b&gt;inventory &amp;rarr; &#39;sold&#39;&lt;/b&gt;, &lt;b&gt;demand &amp;rarr; &#39;fulfilled&#39;&lt;/b&gt;&lt;br&gt;&amp;bull; Emits &lt;b&gt;HandoverConfirmed&lt;/b&gt; event &amp;amp; increments EMF metric count&lt;br&gt;&amp;bull; Dispatches celebratory bilingual confirmation WhatsApp message&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="loop_box">
+          <mxGeometry x="25" y="38" width="480" height="82" as="geometry" />
+        </mxCell>
+
+        <!-- Branch B: Catalog & Demand Board -->
+        <mxCell id="branch_b" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#38bdf8;strokeWidth=1.5;" vertex="1" parent="loop_box">
+          <mxGeometry x="15" y="135" width="500" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_branch_b" value="&lt;b style=&quot;font-size: 12px; color: #38bdf8;&quot;&gt;BRANCH B: process-catalog-${reqId}-${idx} &amp;amp; demand-board&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 10.5px; color: #e2e8f0;&quot;&gt;&amp;bull; Queries active inventory or open demands in DynamoDB&lt;br&gt;&amp;bull; Builds Meta 2-tier interactive list payload (&lt;b&gt;browse_year_*&lt;/b&gt; / &lt;b&gt;request_*&lt;/b&gt;)&lt;br&gt;&amp;bull; Dispatches interactive list or formatted grouped text fallback&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="loop_box">
+          <mxGeometry x="25" y="138" width="480" height="82" as="geometry" />
+        </mxCell>
+
+        <!-- Branch C: Demand (Wishlist Matchmaking) -->
+        <mxCell id="branch_c" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#eab308;strokeWidth=1.5;" vertex="1" parent="loop_box">
+          <mxGeometry x="15" y="235" width="500" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_branch_c" value="&lt;b style=&quot;font-size: 12px; color: #facc15;&quot;&gt;BRANCH C: process-demand-${reqId}-${idx}-${item.concept}&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 10.5px; color: #e2e8f0;&quot;&gt;&amp;bull; Scans available inventory matching requested year / subject concept&lt;br&gt;&amp;bull; &lt;b&gt;Match Found:&lt;/b&gt; Groups by seller &amp;rarr; locks &lt;b&gt;48H Hold&lt;/b&gt; (&lt;b&gt;reservedUntil = now + 48h&lt;/b&gt;)&lt;br&gt;&amp;nbsp;&amp;nbsp;- Issues cryptographic 4-digit code (&lt;b&gt;#XXXX&lt;/b&gt;) &amp;amp; links demand (&lt;b&gt;&#39;matched&#39;&lt;/b&gt;)&lt;br&gt;&amp;nbsp;&amp;nbsp;- Emits &lt;b&gt;MatchFound&lt;/b&gt; event &amp;amp; dispatches asymmetric mutual intros&lt;br&gt;&amp;bull; &lt;b&gt;No Match:&lt;/b&gt; Inserts open wishlist entry into &lt;b&gt;demand-board&lt;/b&gt; (&lt;b&gt;&#39;pending&#39;&lt;/b&gt;)&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="loop_box">
+          <mxGeometry x="25" y="238" width="480" height="108" as="geometry" />
+        </mxCell>
+
+        <!-- Branch D: Offer (Inventory Listing) -->
+        <mxCell id="branch_d" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#a855f7;strokeWidth=1.5;" vertex="1" parent="loop_box">
+          <mxGeometry x="15" y="360" width="500" height="195" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_branch_d" value="&lt;b style=&quot;font-size: 12px; color: #c084fc;&quot;&gt;BRANCH D: Offer Pipeline (Listing &amp;amp; Immediate Match)&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 10.5px; color: #e2e8f0;&quot;&gt;&amp;bull; &lt;b&gt;Sub-step 1: query-demand-board-matching-${reqId}-${idx}-${concept}&lt;/b&gt;&lt;br&gt;&amp;nbsp;&amp;nbsp;- Checks waiting buyer wishlists for normalized concept match&lt;br&gt;&amp;nbsp;&amp;nbsp;- If matched: locks 48h hold (#XXXX), sets &#39;reserved&#39; and notifies both&lt;br&gt;&amp;bull; &lt;b&gt;Sub-step 2 (No match): publish-active-inventory-${reqId}-${idx}-${concept}&lt;/b&gt;&lt;br&gt;&amp;nbsp;&amp;nbsp;- Saves new listing in DynamoDB &lt;b&gt;active-inventory&lt;/b&gt; (&lt;b&gt;status: &#39;active&#39;&lt;/b&gt;)&lt;br&gt;&amp;nbsp;&amp;nbsp;- Emits EventBridge &lt;b&gt;InventoryAdded&lt;/b&gt; lifecycle event&lt;br&gt;&amp;bull; &lt;b&gt;Sub-step 3: s3-vector-chunking-${reqId}-${idx}-${concept}&lt;/b&gt;&lt;br&gt;&amp;nbsp;&amp;nbsp;- Enforces strict &lt;b&gt;&amp;le; 2048-Byte (2KB)&lt;/b&gt; chunking for Bedrock KnowledgeBase&lt;br&gt;&amp;nbsp;&amp;nbsp;- Emits &lt;b&gt;S3VectorIngested&lt;/b&gt; event with metadata&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="loop_box">
+          <mxGeometry x="25" y="363" width="480" height="188" as="geometry" />
+        </mxCell>
+
+
+        <!-- ==================== COLUMN 4: PERSISTENCE, INFRASTRUCTURE & TELEMETRY ==================== -->
+        <mxCell id="col4_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0f172a;strokeColor=#1e293b;strokeWidth=2;arcSize=3;" vertex="1" parent="1">
+          <mxGeometry x="1560" y="115" width="490" height="1440" as="geometry" />
+        </mxCell>
+        <mxCell id="col4_hdr" value="&lt;b&gt;4. Cloud Checkpointing &amp;amp; Telemetry&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e293b;strokeColor=#334155;fontColor=#38bdf8;fontSize=15;align=center;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1575" y="130" width="460" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Node 4.1: DynamoDB Active Inventory -->
+        <mxCell id="c4_dynamo_inv" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e3a8a;strokeColor=#3b82f6;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1575" y="190" width="460" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_d1" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#3b82f6;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.dynamodb;" vertex="1" parent="1">
+          <mxGeometry x="1590" y="223" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_d1" value="&lt;b style=&quot;font-size: 13px; color: #60a5fa;&quot;&gt;Amazon DynamoDB: active-inventory&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #cbd5e1;&quot;&gt;&amp;bull; &lt;b&gt;PK: itemId (UUID)&lt;/b&gt; &amp;bull; &lt;b&gt;GSI: byConcept&lt;/b&gt;&lt;br&gt;&amp;bull; Attributes: title, domain, concept, condition, status (active|reserved|sold)&lt;br&gt;&amp;bull; &lt;b&gt;48H Hold Checkpoint:&lt;/b&gt; reservedUntil, reservedForPhone,&lt;br&gt;&amp;nbsp;&amp;nbsp;handoverCode (#XXXX), matchedDemandId&lt;br&gt;&amp;bull; Encrypted at rest via AWS KMS Customer Managed Key (CMK)&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="1650" y="195" width="375" height="105" as="geometry" />
+        </mxCell>
+
+        <!-- Node 4.2: DynamoDB Demand Board -->
+        <mxCell id="c4_dynamo_dem" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e3a8a;strokeColor=#06b6d4;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1575" y="320" width="460" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_d2" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#06b6d4;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.dynamodb;" vertex="1" parent="1">
+          <mxGeometry x="1590" y="351" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_d2" value="&lt;b style=&quot;font-size: 13px; color: #22d3ee;&quot;&gt;Amazon DynamoDB: demand-board&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #cbd5e1;&quot;&gt;&amp;bull; &lt;b&gt;PK: demandId (UUID)&lt;/b&gt; &amp;bull; &lt;b&gt;GSI: byConcept&lt;/b&gt;&lt;br&gt;&amp;bull; Attributes: userPhone, requestedQuery, concept, domain, status&lt;br&gt;&amp;bull; &lt;b&gt;Match Checkpoint:&lt;/b&gt; matchedItemId, handoverCode, matchedAt&lt;br&gt;&amp;bull; Status transitions: pending &amp;rarr; matched &amp;rarr; fulfilled&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="1650" y="325" width="375" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- Node 4.3: EventBridge Bus -->
+        <mxCell id="c4_eventbridge" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7c2d12;strokeColor=#f97316;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1575" y="445" width="460" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_eb" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#f97316;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.eventbridge;" vertex="1" parent="1">
+          <mxGeometry x="1590" y="476" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_eb" value="&lt;b style=&quot;font-size: 13px; color: #fb923c;&quot;&gt;Amazon EventBridge Lifecycle Events&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #fed7aa;&quot;&gt;&amp;bull; &lt;b&gt;ProcessingStarted:&lt;/b&gt; Inbound webhook ingested&lt;br&gt;&amp;bull; &lt;b&gt;ExtractionComplete:&lt;/b&gt; Bedrock intent parsing finished&lt;br&gt;&amp;bull; &lt;b&gt;MatchFound:&lt;/b&gt; Active 48h hold issued (#XXXX)&lt;br&gt;&amp;bull; &lt;b&gt;InventoryAdded:&lt;/b&gt; Unmatched book listed in catalog&lt;br&gt;&amp;bull; &lt;b&gt;S3VectorIngested:&lt;/b&gt; Embedding chunk indexed (&amp;le; 2KB)&lt;br&gt;&amp;bull; &lt;b&gt;HandoverConfirmed:&lt;/b&gt; Mutual physical exchange completed&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="1650" y="450" width="375" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- Node 4.4: S3 & Bedrock KnowledgeBase -->
+        <mxCell id="c4_storage" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4c1d95;strokeColor=#8b5cf6;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1575" y="570" width="460" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_s3" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#22c55e;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.s3;" vertex="1" parent="1">
+          <mxGeometry x="1590" y="598" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_storage" value="&lt;b style=&quot;font-size: 13px; color: #c084fc;&quot;&gt;Amazon S3 FileBucket &amp;amp; Bedrock Vectors&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #ede9fe;&quot;&gt;&amp;bull; &lt;b&gt;parent-book-images:&lt;/b&gt; 30-Day auto-expiration lifecycle policy&lt;br&gt;&amp;bull; &lt;b&gt;Bedrock KnowledgeBase:&lt;/b&gt; Titan Text Embeddings G1&lt;br&gt;&amp;bull; Chunk size bounded to 2048 bytes for semantic syllabus search&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="1650" y="575" width="375" height="95" as="geometry" />
+        </mxCell>
+
+        <!-- Node 4.5: Meta WhatsApp Cloud API -->
+        <mxCell id="c4_meta" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#064e3b;strokeColor=#10b981;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1575" y="690" width="460" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_meta" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#22c55e;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.mobile_client;" vertex="1" parent="1">
+          <mxGeometry x="1592" y="718" width="45" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_meta" value="&lt;b style=&quot;font-size: 13px; color: #4ade80;&quot;&gt;Meta WhatsApp Outbound Dispatcher&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #d1fae5;&quot;&gt;&amp;bull; &lt;b&gt;sendWhatsAppTextMessage()&lt;/b&gt; with exponential backoff&lt;br&gt;&amp;bull; &lt;b&gt;sendWhatsAppInteractiveMessage()&lt;/b&gt; for 2-tier lists &amp;amp; safety cards&lt;br&gt;&amp;bull; Protected from duplicate dispatch by Step Memoization&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="1650" y="695" width="375" height="95" as="geometry" />
+        </mxCell>
+
+        <!-- Node 4.6: CloudWatch EMF Metrics -->
+        <mxCell id="c4_emf" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#881337;strokeColor=#f43f5e;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1575" y="810" width="460" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_cw" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#f43f5e;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.cloudwatch;" vertex="1" parent="1">
+          <mxGeometry x="1590" y="846" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_emf" value="&lt;b style=&quot;font-size: 13px; color: #fb7185;&quot;&gt;CloudWatch Embedded Metric Format (EMF)&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #ffe4e6;&quot;&gt;&amp;bull; &lt;b&gt;Namespace:&lt;/b&gt; BooksApp/WhatsAppMarketplace&lt;br&gt;&amp;bull; &lt;b&gt;WorkflowCompletionTime:&lt;/b&gt; End-to-end duration (ms)&lt;br&gt;&amp;bull; &lt;b&gt;Counters:&lt;/b&gt; DemandMatchedCount, InventoryAddedCount,&lt;br&gt;&amp;nbsp;&amp;nbsp;HandoverConfirmedCount, YearClarificationRequested&lt;br&gt;&amp;bull; Zero-overhead asynchronous stdout metric shipping&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="1650" y="815" width="375" height="110" as="geometry" />
+        </mxCell>
+
+        <!-- Node 4.7: X-Ray Subsegment Spans -->
+        <mxCell id="c4_xray_sub" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0c4a6e;strokeColor=#0284c7;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1575" y="945" width="460" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="icon_xray2" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#0284c7;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.xray;" vertex="1" parent="1">
+          <mxGeometry x="1590" y="988" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_xray_sub" value="&lt;b style=&quot;font-size: 13px; color: #38bdf8;&quot;&gt;AWS X-Ray Subsegment Instrumentation&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 11px; color: #e0f2fe;&quot;&gt;&amp;bull; &lt;b&gt;step_fetch_media:&lt;/b&gt; Graph API latency &amp;amp; payload size&lt;br&gt;&amp;bull; &lt;b&gt;step_bedrock_extraction:&lt;/b&gt; Multimodal Nova inference latency&lt;br&gt;&amp;bull; &lt;b&gt;step_confirm_handover:&lt;/b&gt; Dual DynamoDB write timing&lt;br&gt;&amp;bull; &lt;b&gt;step_process_demand / step_match_existing_demand&lt;/b&gt;&lt;br&gt;&amp;bull; &lt;b&gt;step_publish_active_inventory:&lt;/b&gt; Inventory put execution&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="1650" y="950" width="375" height="125" as="geometry" />
+        </mxCell>
+
+
+        <!-- ==================== COLUMN 5: ARCHITECTURAL DEEP DIVE & GUARANTEES ==================== -->
+        <mxCell id="col5_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#090d16;strokeColor=#38bdf8;strokeWidth=2;arcSize=3;" vertex="1" parent="1">
+          <mxGeometry x="2075" y="115" width="595" height="1440" as="geometry" />
+        </mxCell>
+        <mxCell id="col5_hdr" value="&lt;b&gt;Durable Execution Guarantees &amp;amp; Lifecycle Reference&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0369a1;strokeColor=#38bdf8;fontColor=#ffffff;fontSize=15;align=center;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="2090" y="130" width="565" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="deep_dive_text" value="&lt;div style=&quot;font-size: 11px; line-height: 1.45; color: #e2e8f0; padding-right: 5px;&quot;&gt;
+&lt;p style=&quot;margin: 4px 0;&quot;&gt;&lt;b style=&quot;color: #38bdf8; font-size: 12px;&quot;&gt;[A] Why Lambda Durable Execution is Critical for WhatsApp Bots:&lt;/b&gt;&lt;br&gt;
+In conversational marketplace apps, a single message can trigger multiple expensive side effects: Meta Media downloads, Bedrock Multimodal OCR ($0.03/call), DynamoDB GSI queries, reservation code (#XXXX) generation, and outbound WhatsApp dispatch. If any downstream network call stutters or times out, standard Lambda retries will re-execute the entire function, causing duplicate messages to be sent to parents and duplicate inventory to be listed. &lt;b&gt;withDurableExecution&lt;/b&gt; checkpoints each step boundary, making retries transparent, safe, and completely idempotent.&lt;/p&gt;
+
+&lt;p style=&quot;margin: 8px 0 4px 0;&quot;&gt;&lt;b style=&quot;color: #38bdf8; font-size: 12px;&quot;&gt;[B] The Step Memoization Architecture:&lt;/b&gt;&lt;br&gt;
+The durable engine initializes an in-memory &lt;b&gt;executedSteps = new Map&amp;lt;string, any&amp;gt;()&lt;/b&gt;. When &lt;b&gt;context.step(name, fn)&lt;/b&gt; is invoked:
+&lt;br&gt;&amp;bull; &lt;b&gt;Cache Hit:&lt;/b&gt; If &lt;i&gt;name&lt;/i&gt; is present, it immediately returns the memoized result without calling &lt;i&gt;fn&lt;/i&gt;.
+&lt;br&gt;&amp;bull; &lt;b&gt;Cache Miss:&lt;/b&gt; It awaits &lt;i&gt;fn()&lt;/i&gt;, commits the result to the map, and returns it.
+&lt;br&gt;All side effects (Meta API calls, DynamoDB mutations, WhatsApp outbound dispatches) are encapsulated within step boundaries.&lt;/p&gt;
+
+&lt;p style=&quot;margin: 8px 0 4px 0;&quot;&gt;&lt;b style=&quot;color: #38bdf8; font-size: 12px;&quot;&gt;[C] Deterministic Step Key Taxonomy:&lt;/b&gt;&lt;br&gt;
+To avoid collisions in compound messages containing multiple book offers or requests, step keys combine the phase name, request ID, sub-intent index, and canonical concept:&lt;br&gt;
+&amp;bull; &lt;b style=&quot;color: #fb923c;&quot;&gt;emit-processing-started-${reqId}&lt;/b&gt; &amp;mdash; Ingress lifecycle event&lt;br&gt;
+&amp;bull; &lt;b style=&quot;color: #22d3ee;&quot;&gt;fetch-media-${reqId}&lt;/b&gt; &amp;mdash; Meta Graph API media resolution&lt;br&gt;
+&amp;bull; &lt;b style=&quot;color: #c084fc;&quot;&gt;bedrock-vision-extraction-${reqId}&lt;/b&gt; &amp;mdash; Multimodal OCR &amp;amp; intent parsing&lt;br&gt;
+&amp;bull; &lt;b style=&quot;color: #fb923c;&quot;&gt;emit-extraction-complete-${reqId}&lt;/b&gt; &amp;mdash; Extraction lifecycle event&lt;br&gt;
+&amp;bull; &lt;b style=&quot;color: #34d399;&quot;&gt;process-confirm-handover-${reqId}-${idx}&lt;/b&gt; &amp;mdash; &#39;Sold&#39; / &#39;Vendu&#39; transition&lt;br&gt;
+&amp;bull; &lt;b style=&quot;color: #38bdf8;&quot;&gt;process-catalog-${reqId}-${idx}&lt;/b&gt; &amp;mdash; 2-Tier interactive catalog dispatch&lt;br&gt;
+&amp;bull; &lt;b style=&quot;color: #facc15;&quot;&gt;process-demand-${reqId}-${idx}-${concept}&lt;/b&gt; &amp;mdash; 48H hold reservation lock&lt;br&gt;
+&amp;bull; &lt;b style=&quot;color: #c084fc;&quot;&gt;query-demand-board-matching-${reqId}-${idx}-${concept}&lt;/b&gt; &amp;mdash; Offer match check&lt;br&gt;
+&amp;bull; &lt;b style=&quot;color: #a855f7;&quot;&gt;publish-active-inventory-${reqId}-${idx}-${concept}&lt;/b&gt; &amp;mdash; Active inventory write&lt;br&gt;
+&amp;bull; &lt;b style=&quot;color: #a855f7;&quot;&gt;s3-vector-chunking-${reqId}-${idx}-${concept}&lt;/b&gt; &amp;mdash; 2KB vector chunking&lt;/p&gt;
+
+&lt;p style=&quot;margin: 8px 0 4px 0;&quot;&gt;&lt;b style=&quot;color: #38bdf8; font-size: 12px;&quot;&gt;[D] Fast-Path vs. Cognitive Path Routing:&lt;/b&gt;&lt;br&gt;
+Before triggering Bedrock vision extraction, the handler checks for fast-path opportunities:&lt;br&gt;
+1. &lt;b&gt;Interactive Callbacks:&lt;/b&gt; Taps on interactive grade drawers or confirmation buttons are executed immediately without LLM invocation.&lt;br&gt;
+2. &lt;b&gt;Contact Queries:&lt;/b&gt; Inquiries like &quot;Which parent?&quot; or &quot;Quel parent ?&quot; match active buyer/seller holds directly in DynamoDB, instantly providing phone &amp;amp; wa.me links with zero AI cost.&lt;/p&gt;
+
+&lt;p style=&quot;margin: 8px 0 4px 0;&quot;&gt;&lt;b style=&quot;color: #38bdf8; font-size: 12px;&quot;&gt;[E] 48-Hour Reservation Lock &amp;amp; Cryptographic Code (#XXXX):&lt;/b&gt;&lt;br&gt;
+When a match occurs between an offering and a seeking parent, the step generates a 4-digit code (&lt;b&gt;#XXXX&lt;/b&gt;), sets &lt;b&gt;status: &#39;reserved&#39;&lt;/b&gt; with &lt;b&gt;reservedUntil = Date.now() + 48 Hours&lt;/b&gt;, and links both records across &lt;b&gt;active-inventory&lt;/b&gt; and &lt;b&gt;demand-board&lt;/b&gt;. The scheduled 15-minute cron sweeper automatically re-activates uncompleted holds after 48h.&lt;/p&gt;
+
+&lt;p style=&quot;margin: 8px 0 4px 0;&quot;&gt;&lt;b style=&quot;color: #38bdf8; font-size: 12px;&quot;&gt;[F] Comparison: Lambda Durable Functions vs. AWS Step Functions:&lt;/b&gt;&lt;br&gt;
+&amp;bull; &lt;b&gt;Cost:&lt;/b&gt; Step Functions Standard incurs $0.025 / 1,000 state transitions. Lambda Durable Functions runs completely inside the Lambda memory boundary with &lt;b&gt;$0.00 extra state-transition cost&lt;/b&gt;.&lt;br&gt;
+&amp;bull; &lt;b&gt;Latency:&lt;/b&gt; Zero transition network hops between steps; sub-millisecond local function invocations.&lt;br&gt;
+&amp;bull; &lt;b&gt;Type Safety:&lt;/b&gt; Fully strongly typed TypeScript closures sharing local memory variables seamlessly.&lt;/p&gt;
+&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="2090" y="180" width="565" height="1355" as="geometry" />
+        </mxCell>
+
+
+        <!-- ==================== NUMBERED BADGES & FLOW EDGES ==================== -->
+
+        <!-- Flow 1: Payload -> Handler -->
+        <mxCell id="badge_1" value="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="223" y="323" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#38bdf8;strokeWidth=2;" edge="1" parent="1" source="c1_payload" target="c1_handler">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Flow 2: Handler -> X-Ray Root Segment -->
+        <mxCell id="badge_2" value="2" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="223" y="463" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#f59e0b;strokeWidth=2;" edge="1" parent="1" source="c1_handler" target="c1_xray">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Flow 3: X-Ray Root Segment -> Correlation ID -->
+        <mxCell id="badge_3" value="3" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="223" y="603" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0284c7;strokeWidth=2;" edge="1" parent="1" source="c1_xray" target="c1_reqid">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Flow 4: Handler -> Durable Wrapper (Column 2) -->
+        <mxCell id="badge_4" value="4" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="435" y="265" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#818cf8;strokeWidth=2;" edge="1" parent="1" source="c1_handler" target="c2_wrapper">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Flow 5: Wrapper -> Memoization Map -->
+        <mxCell id="badge_5" value="5" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="698" y="367" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#38bdf8;strokeWidth=2;" edge="1" parent="1" source="c2_wrapper" target="c2_map">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Flow 6: Memoization Map -> Step Interceptor -->
+        <mxCell id="badge_6" value="6" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="698" y="527" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#60a5fa;strokeWidth=2;" edge="1" parent="1" source="c2_map" target="c2_interceptor">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Flow 7: Step Interceptor -> Deterministic Keys -->
+        <mxCell id="badge_7" value="7" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="698" y="747" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#a855f7;strokeWidth=2;" edge="1" parent="1" source="c2_interceptor" target="c2_keys">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Flow 8: Step Interceptor -> Step 1 (Column 3) -->
+        <mxCell id="badge_8" value="8" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="955" y="225" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#f97316;strokeWidth=2;" edge="1" parent="1" source="c2_interceptor" target="step_1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="965" y="645" />
+              <mxPoint x="965" y="238" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Flow 9: Step 1 -> Step 2 -->
+        <mxCell id="badge_9" value="9" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1248" y="287" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#06b6d4;strokeWidth=2;" edge="1" parent="1" source="step_1" target="step_2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Flow 10: Step 2 -> Step 3 (Bedrock Vision) -->
+        <mxCell id="badge_10" value="10" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1248" y="407" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#8b5cf6;strokeWidth=2;" edge="1" parent="1" source="step_2" target="step_3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Flow 11: Step 3 -> Step 4 (Extraction Complete) -->
+        <mxCell id="badge_11" value="11" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1248" y="542" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#f97316;strokeWidth=2;" edge="1" parent="1" source="step_3" target="step_4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Flow 12: Step 4 -> Dynamic Loop -->
+        <mxCell id="badge_12" value="12" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1248" y="642" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#10b981;strokeWidth=2;" edge="1" parent="1" source="step_4" target="loop_box">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Flow 13: Step 1 -> EventBridge (Column 4) -->
+        <mxCell id="badge_13" value="13" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1538" y="225" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#f97316;strokeWidth=2;" edge="1" parent="1" source="step_1" target="c4_eventbridge">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1545" y="238" />
+              <mxPoint x="1545" y="500" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Flow 14: Step 3 -> Bedrock KnowledgeBase / S3 Vectors -->
+        <mxCell id="badge_14" value="14" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1538" y="468" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#8b5cf6;strokeWidth=2;" edge="1" parent="1" source="step_3" target="c4_storage">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1545" y="480" />
+              <mxPoint x="1545" y="622" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Flow 15: Branch C (Demand) -> DynamoDB Active Inventory -->
+        <mxCell id="badge_15" value="15" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1538" y="940" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_15" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#3b82f6;strokeWidth=2;" edge="1" parent="1" source="branch_c" target="c4_dynamo_inv">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1545" y="948" />
+              <mxPoint x="1545" y="248" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Flow 16: Branch C (Demand) -> DynamoDB Demand Board -->
+        <mxCell id="badge_16" value="16" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1538" y="965" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_16" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#06b6d4;strokeWidth=2;" edge="1" parent="1" source="branch_c" target="c4_dynamo_dem">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1545" y="955" />
+              <mxPoint x="1545" y="375" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Flow 17: Branch A (Handover) -> EventBridge -->
+        <mxCell id="badge_17" value="17" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1538" y="735" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_17" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#10b981;strokeWidth=2;" edge="1" parent="1" source="branch_a" target="c4_eventbridge">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1545" y="735" />
+              <mxPoint x="1545" y="520" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Flow 18: Dynamic Loop -> Meta WhatsApp Dispatcher -->
+        <mxCell id="badge_18" value="18" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1538" y="775" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_18" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#22c55e;strokeWidth=2;" edge="1" parent="1" source="loop_box" target="c4_meta">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1545" y="800" />
+              <mxPoint x="1545" y="742" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Flow 19: Durable Workflow -> CloudWatch EMF Metrics -->
+        <mxCell id="badge_19" value="19" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1538" y="860" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_19" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#f43f5e;strokeWidth=2;" edge="1" parent="1" source="loop_box" target="c4_emf">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1545" y="880" />
+              <mxPoint x="1545" y="870" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Flow 20: Durable Context -> X-Ray Subsegments Instrumentation -->
+        <mxCell id="badge_20" value="20" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#0284c7;strokeColor=#ffffff;strokeWidth=2;fontColor=#ffffff;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1538" y="1005" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_20" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0284c7;strokeWidth=2;" edge="1" parent="1" source="loop_box" target="c4_xray_sub">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1545" y="1012" />
+              <mxPoint x="1545" y="1012" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
