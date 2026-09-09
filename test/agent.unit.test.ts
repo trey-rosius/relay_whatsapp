@@ -32,7 +32,7 @@ test('strands agent tools: searchInventory queries and filters active items', as
   });
 
   const allItems = await Array.fromAsync(activeInventory.scan());
-  const found = allItems.find(i => i.itemId === testItemId);
+  const found = allItems.find((i) => i.itemId === testItemId);
   assert.ok(found, 'Seeded item should exist in active inventory');
   assert.strictEqual(found?.title, 'Year 8 Mathematics Textbook');
   assert.strictEqual(found?.domain, 'Mathematics');
@@ -55,7 +55,7 @@ test('strands agent tools: createDemand and listDemands manage parent wishlists'
   });
 
   const allDemands = await Array.fromAsync(demandBoard.scan());
-  const found = allDemands.find(d => d.demandId === testDemandId);
+  const found = allDemands.find((d) => d.demandId === testDemandId);
   assert.ok(found, 'Seeded demand should exist on demand board');
   assert.strictEqual(found?.concept, 'Year10Biology');
   assert.strictEqual(found?.status, 'pending');
@@ -93,7 +93,7 @@ test('catalog overflow: buildInteractiveOtherGradesPayload generates sub-catalog
   assert.ok(payload.header?.text.includes('Other Grades'), 'Header should mention Other Grades');
   assert.ok(payload.action.button.includes('Select Grade'), 'Button should say Select Grade');
 
-  const rowIds = payload.action.sections[0].rows.map(r => r.id);
+  const rowIds = payload.action.sections[0].rows.map((r) => r.id);
   assert.ok(rowIds.includes('browse_year_Year11'), 'Should contain Year 11 row');
   assert.ok(rowIds.includes('browse_year_Year12'), 'Should contain Year 12 row');
   assert.ok(rowIds.includes('browse_year_Year13'), 'Should contain Year 13 row');
@@ -111,7 +111,7 @@ test('catalog overflow: buildInteractiveYearSubjectsPayload distinguishes Genera
 
   // 1. Tapping 'General' returns only the 2 un-graded books (Computing, Social Studies)
   const generalPayload = buildInteractiveYearSubjectsPayload('General', mockInventory, 'en');
-  const generalSubjects = generalPayload.action.sections[0].rows.map(r => r.title);
+  const generalSubjects = generalPayload.action.sections[0].rows.map((r) => r.title);
   assert.strictEqual(generalSubjects.length, 2);
   assert.ok(generalSubjects.includes('Computing'));
   assert.ok(generalSubjects.includes('Social Studies'));
@@ -119,10 +119,10 @@ test('catalog overflow: buildInteractiveYearSubjectsPayload distinguishes Genera
   // 2. Querying 'other' returns all 5 books in overflow grades with grade tags
   const otherPayload = buildInteractiveYearSubjectsPayload('other', mockInventory, 'en');
   assert.strictEqual(otherPayload.action.sections[0].rows.length, 5);
-  const otherTitles = otherPayload.action.sections[0].rows.map(r => r.title);
-  assert.ok(otherTitles.some(t => t.includes('Chemistry (Year 11)')));
-  assert.ok(otherTitles.some(t => t.includes('Physics (Year 12)')));
-  assert.ok(otherTitles.some(t => t.includes('Biology (Year 13)')));
+  const otherTitles = otherPayload.action.sections[0].rows.map((r) => r.title);
+  assert.ok(otherTitles.some((t) => t.includes('Chemistry (Year 11)')));
+  assert.ok(otherTitles.some((t) => t.includes('Physics (Year 12)')));
+  assert.ok(otherTitles.some((t) => t.includes('Biology (Year 13)')));
   assert.ok(otherTitles.includes('Computing'));
   assert.ok(otherTitles.includes('Social Studies'));
 
@@ -224,9 +224,15 @@ test('parent activity: buildParentActivitySummary and api.getParentActivity accu
     // Test English summary via API handler
     const apiHandlers = typeof (api as any) === 'function' ? (api as any)() : api;
     const summaryEn = await apiHandlers.getParentActivity(testParentPhone, 'en');
-    assert.ok(summaryEn.includes('Books on Sale (1)'), `Should list 1 book on sale, got: ${summaryEn}`);
+    assert.ok(
+      summaryEn.includes('Books on Sale (1)'),
+      `Should list 1 book on sale, got: ${summaryEn}`
+    );
     assert.ok(summaryEn.includes('Year 5 Mathematics'));
-    assert.ok(summaryEn.includes('Exchanges in Progress (1)'), 'Should list 1 exchange in progress');
+    assert.ok(
+      summaryEn.includes('Exchanges in Progress (1)'),
+      'Should list 1 exchange in progress'
+    );
     assert.ok(summaryEn.includes('#4589'), 'Should include verification code');
     assert.ok(summaryEn.includes('Books Sold (1)'), 'Should list 1 book sold');
     assert.ok(summaryEn.includes('Books Acquired / Bought (1)'), 'Should list 1 book bought');
@@ -242,7 +248,9 @@ test('parent activity: buildParentActivitySummary and api.getParentActivity accu
 
     // Test empty parent guidance
     const emptySummary = await buildParentActivitySummary('+237600000000', 'en');
-    assert.ok(emptySummary.includes('You do not have any books listed, sold, bought, or requested yet'));
+    assert.ok(
+      emptySummary.includes('You do not have any books listed, sold, bought, or requested yet')
+    );
     assert.ok(emptySummary.includes('Get started'));
   } finally {
     // Clean up
@@ -255,4 +263,3 @@ test('parent activity: buildParentActivitySummary and api.getParentActivity accu
     ]);
   }
 });
-

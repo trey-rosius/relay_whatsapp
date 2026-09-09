@@ -28,7 +28,7 @@ let server: ChildProcess | null = null;
 let api: typeof ApiType;
 
 test.before(async () => {
-  if (!await isServerRunning()) {
+  if (!(await isServerRunning())) {
     server = spawn('npm', ['run', 'dev:server'], {
       cwd: process.cwd(),
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -55,7 +55,9 @@ test.before(async () => {
 
 test.after(() => {
   if (server?.pid) {
-    try { process.kill(-server.pid, 'SIGTERM'); } catch {}
+    try {
+      process.kill(-server.pid, 'SIGTERM');
+    } catch {}
   }
 });
 
@@ -77,7 +79,12 @@ test('webhook: Meta verification fails with invalid token', async () => {
 
 test('matchmaker: proactive matching notifies waiting wishlist user', async () => {
   // Step 1: User requests an item not in stock ("Year 5 Chemistry")
-  const demand = await api.createDemand('+15556733768', 'Year 5 Chemistry', 'Year5Chemistry', 'Marketplace');
+  const demand = await api.createDemand(
+    '+15556733768',
+    'Year 5 Chemistry',
+    'Year5Chemistry',
+    'Marketplace'
+  );
   assert.strictEqual(demand.status, 'pending');
   assert.strictEqual(demand.concept, 'Year5Chemistry');
 
@@ -94,7 +101,7 @@ test('matchmaker: proactive matching notifies waiting wishlist user', async () =
 
   // Step 3: Verify DemandBoard status updated to 'matched'
   const demands = await api.listDemands();
-  const updatedDemand = demands.find(d => d.demandId === demand.demandId);
+  const updatedDemand = demands.find((d) => d.demandId === demand.demandId);
   assert.strictEqual(updatedDemand?.status, 'matched');
 });
 
@@ -135,7 +142,7 @@ test('events: lifecycle events stream records all stages', async () => {
   const events = await api.getLifecycleEvents();
   assert.ok(events.length >= 3);
 
-  const eventTypes = events.map(e => e.eventType);
+  const eventTypes = events.map((e) => e.eventType);
   assert.ok(eventTypes.includes('ProcessingStarted'));
   assert.ok(eventTypes.includes('ExtractionComplete'));
   assert.ok(eventTypes.includes('S3VectorIngested'));
@@ -157,7 +164,10 @@ test('parent group chat: processes multi-intent messages (offers + demands)', as
     message_text: 'Hello parents. We have books year 9 and 10&11. We need book year 12. Thanks you',
   });
   assert.strictEqual(res2.success, true);
-  assert.ok((res2.result.extractedIntentsCount || 0) >= 2, 'Should extract multiple intents from combined message');
+  assert.ok(
+    (res2.result.extractedIntentsCount || 0) >= 2,
+    'Should extract multiple intents from combined message'
+  );
 
   // Parent 3 posts: "I have Year 2 Science textbook" -> should match Parent 1!
   const res3 = await api.handleWebhook({
@@ -174,7 +184,12 @@ test('parent photo batch: saves under parent catalog and notifies matching wishl
   const sellerPhone = '+15556733768';
 
   // Step 1: Another parent registers a wishlist entry for "Year 8 Science"
-  const waitingParentDemand = await api.createDemand('+15559998888', 'Year 8 Science', 'Year8Science', 'Science');
+  const waitingParentDemand = await api.createDemand(
+    '+15559998888',
+    'Year 8 Science',
+    'Year8Science',
+    'Science'
+  );
   assert.strictEqual(waitingParentDemand.status, 'pending');
 
   // Step 2: Parent uploads 4 textbook cover images sequentially
@@ -182,7 +197,10 @@ test('parent photo batch: saves under parent catalog and notifies matching wishl
     { media_id: 'media_cambridge_science_8', message_text: 'I have Year 8 Science' },
     { media_id: 'media_cambridge_english_2', message_text: 'I have Year 2 English Textbook' },
     { media_id: 'media_cambridge_maths_2', message_text: 'I have Year 2 Mathematics Textbook' },
-    { media_id: 'media_cambridge_global_2', message_text: 'I have Year 2 Global Perspectives Textbook' },
+    {
+      media_id: 'media_cambridge_global_2',
+      message_text: 'I have Year 2 Global Perspectives Textbook',
+    },
   ];
 
   for (const photo of photos) {
@@ -200,7 +218,7 @@ test('parent photo batch: saves under parent catalog and notifies matching wishl
 
   // Step 4: Verify the waiting parent's wishlist was proactively matched
   const updatedDemands = await api.listDemands();
-  const matchedDemand = updatedDemands.find(d => d.demandId === waitingParentDemand.demandId);
+  const matchedDemand = updatedDemands.find((d) => d.demandId === waitingParentDemand.demandId);
   assert.strictEqual(matchedDemand?.status, 'matched');
 });
 
@@ -215,7 +233,9 @@ test('greetings & spam: filters chit-chat and responds with helpful guidance', a
       message_text: text,
     });
 
-    assert.ok(typeof res.result.replyMessage === 'string' && res.result.replyMessage.includes('Share books'));
+    assert.ok(
+      typeof res.result.replyMessage === 'string' && res.result.replyMessage.includes('Share books')
+    );
     assert.ok(res.result.replyMessage.includes('Ask for books'));
     assert.ok(res.result.replyMessage.includes('catalog'));
     assert.ok(res.result.replyMessage.includes('demand board'));
@@ -228,7 +248,10 @@ test('greetings & spam: filters chit-chat and responds with helpful guidance', a
   });
   assert.strictEqual(frRes.success, true);
   assert.strictEqual(frRes.result.status, 'greeting');
-  assert.ok(typeof frRes.result.replyMessage === 'string' && frRes.result.replyMessage.includes('Partager des livres'));
+  assert.ok(
+    typeof frRes.result.replyMessage === 'string' &&
+      frRes.result.replyMessage.includes('Partager des livres')
+  );
   assert.ok(frRes.result.replyMessage.includes('catalogue'));
 });
 
@@ -237,10 +260,15 @@ test('greetings & spam: filters chit-chat and responds with helpful guidance', a
 test('security: HMAC-SHA256 signature validation accepts genuine Meta payloads', async () => {
   const testSecret = 'secret_key_whatsapp_test_9988';
   const rawPayload = JSON.stringify({
-    entry: [{ changes: [{ value: { messages: [{ from: '+15550001111', text: { body: 'Hello' } }] } }] }],
+    entry: [
+      { changes: [{ value: { messages: [{ from: '+15550001111', text: { body: 'Hello' } }] } }] },
+    ],
   });
 
-  const expectedDigest = crypto.createHmac('sha256', testSecret).update(rawPayload, 'utf8').digest('hex');
+  const expectedDigest = crypto
+    .createHmac('sha256', testSecret)
+    .update(rawPayload, 'utf8')
+    .digest('hex');
   const validHeader = `sha256=${expectedDigest}`;
 
   const validResult = await api.validateSignature(rawPayload, validHeader, testSecret);
@@ -251,7 +279,11 @@ test('security: HMAC-SHA256 signature validation accepts genuine Meta payloads',
   assert.strictEqual(tamperedResult.valid, false, 'Tampered signature must be rejected');
 
   const missingHeaderResult = await api.validateSignature(rawPayload, undefined, testSecret);
-  assert.strictEqual(missingHeaderResult.valid, false, 'Missing signature header must be rejected when secret is configured');
+  assert.strictEqual(
+    missingHeaderResult.valid,
+    false,
+    'Missing signature header must be rejected when secret is configured'
+  );
 });
 
 // ─── 9. Security, Governance & Observability Status ──────────────────────────
@@ -276,7 +308,10 @@ test('parsing: automatically sanitizes Year N placeholders and infers correct su
   assert.strictEqual(res.success, true);
   const inventory = await api.listInventory('Year8Science');
   assert.ok(inventory.length >= 1);
-  assert.ok(!inventory.some(i => i.title.includes('<N>') || i.title.includes('Year N')), 'Title must not contain placeholder tokens');
+  assert.ok(
+    !inventory.some((i) => i.title.includes('<N>') || i.title.includes('Year N')),
+    'Title must not contain placeholder tokens'
+  );
 });
 
 // ─── 11. Interactive School Year Validation & Clarification ──────────────────
@@ -291,7 +326,10 @@ test('conversational clarification: prompts parent to specify school year when y
   assert.strictEqual(res.success, true);
   assert.strictEqual(res.result.status, 'needs_year_clarification');
   assert.ok(typeof res.result.replyMessage === 'string' && res.result.replyMessage.length > 0);
-  assert.ok(/year|année|grade|classe/i.test(res.result.replyMessage!), 'Reply message must ask for school year clarification');
+  assert.ok(
+    /year|année|grade|classe/i.test(res.result.replyMessage!),
+    'Reply message must ask for school year clarification'
+  );
 });
 
 // ─── 12. Feature 3A: Parent Storefront & Grade Bundles ────────────────────────
@@ -307,7 +345,7 @@ test('storefront & bundles (3A): computes seller grade bundles and multi-book co
   assert.strictEqual(storefront.sellerPhone, seller);
   assert.ok(storefront.totalBooks >= 2);
   assert.ok(storefront.bundles.length >= 1);
-  assert.ok(storefront.bundles.some(b => b.grade.includes('Year 5')));
+  assert.ok(storefront.bundles.some((b) => b.grade.includes('Year 5')));
   assert.ok(storefront.items.length >= 2);
 });
 
@@ -360,10 +398,18 @@ test('48h reservation (lifecycle): marks matched book as reserved and hides from
 
   // Verify book status is 'reserved' with ~48h expiry
   const sellerBooks = await api.listInventoryBySeller(sellerPhone);
-  const matchedBook = (matchRes.result.itemId ? sellerBooks.find(b => b.itemId === matchRes.result.itemId) : null) || sellerBooks.find(b => b.status === 'reserved') || sellerBooks[sellerBooks.length - 1];
+  const matchedBook =
+    (matchRes.result.itemId
+      ? sellerBooks.find((b) => b.itemId === matchRes.result.itemId)
+      : null) ||
+    sellerBooks.find((b) => b.status === 'reserved') ||
+    sellerBooks[sellerBooks.length - 1];
   assert.ok(matchedBook, 'Matched book must exist in seller inventory');
   assert.strictEqual(matchedBook.status, 'reserved', 'Book must transition to reserved hold');
-  assert.ok(matchedBook.reservedUntil && matchedBook.reservedUntil > Date.now() + 47 * 3600 * 1000, 'Must have ~48H hold timestamp');
+  assert.ok(
+    matchedBook.reservedUntil && matchedBook.reservedUntil > Date.now() + 47 * 3600 * 1000,
+    'Must have ~48H hold timestamp'
+  );
   assert.ok(matchedBook.handoverCode, 'Must have 4-digit handover code');
 });
 
@@ -383,11 +429,17 @@ test('contact inquiry fast-path: parent asking "Which parent? Give his number" r
   const buyerReply = buyerInquiry.result.replyMessage;
 
   // Verify phone is NEVER redacted and contains actual seller number
-  assert.ok(buyerReply.includes('+15551112233') || buyerReply.includes('15551112233'), 'Must contain seller phone number');
+  assert.ok(
+    buyerReply.includes('+15551112233') || buyerReply.includes('15551112233'),
+    'Must contain seller phone number'
+  );
   assert.ok(buyerReply.includes('https://wa.me/15551112233'), 'Must contain direct WhatsApp link');
   assert.ok(!buyerReply.includes('[PHONE_REDACTED]'), 'Must NOT contain [PHONE_REDACTED]');
   assert.ok(!buyerReply.toLowerCase().includes('redacted'), 'Must NOT contain "redacted"');
-  assert.ok(!buyerReply.includes('Welcome to Relay'), 'Must NOT fall back to generic welcome tutorial');
+  assert.ok(
+    !buyerReply.includes('Welcome to Relay'),
+    'Must NOT fall back to generic welcome tutorial'
+  );
 
   // Seller asks for buyer's contact in French
   const sellerInquiry = await api.handleWebhook({
@@ -399,11 +451,17 @@ test('contact inquiry fast-path: parent asking "Which parent? Give his number" r
   const sellerReply = sellerInquiry.result.replyMessage;
   assert.ok(sellerReply, 'Must have seller reply message');
 
-  assert.ok(sellerReply.includes('+15552223344') || sellerReply.includes('15552223344'), 'Must contain buyer phone number');
+  assert.ok(
+    sellerReply.includes('+15552223344') || sellerReply.includes('15552223344'),
+    'Must contain buyer phone number'
+  );
   assert.ok(sellerReply.includes('https://wa.me/15552223344'), 'Must contain direct WhatsApp link');
   assert.ok(!sellerReply.includes('[PHONE_REDACTED]'), 'Must NOT contain [PHONE_REDACTED]');
   assert.ok(!sellerReply.toLowerCase().includes('redacted'), 'Must NOT contain "redacted"');
-  assert.ok(!sellerReply.includes('Bienvenue sur Relay'), 'Must NOT fall back to generic welcome tutorial');
+  assert.ok(
+    !sellerReply.includes('Bienvenue sur Relay'),
+    'Must NOT fall back to generic welcome tutorial'
+  );
 });
 
 test('48h hold expiration: sweeps and releases expired holds back to active inventory', async () => {
@@ -424,7 +482,10 @@ test('48h hold expiration: sweeps and releases expired holds back to active inve
   // Verify book is reserved
   const sellerBooks = await api.listInventoryBySeller(sellerPhone);
   const matchedBookId = matchRes.result?.itemId;
-  const reservedBook = (matchedBookId ? sellerBooks.find(b => b.itemId === matchedBookId) : null) || sellerBooks.find(b => b.status === 'reserved') || sellerBooks[sellerBooks.length - 1];
+  const reservedBook =
+    (matchedBookId ? sellerBooks.find((b) => b.itemId === matchedBookId) : null) ||
+    sellerBooks.find((b) => b.status === 'reserved') ||
+    sellerBooks[sellerBooks.length - 1];
   assert.ok(reservedBook, 'Reserved book must exist');
   assert.strictEqual(reservedBook.status, 'reserved');
 
@@ -434,19 +495,19 @@ test('48h hold expiration: sweeps and releases expired holds back to active inve
 
   // 3. Test explicit releaseHold
   const allDemands = await api.listDemands();
-  const buyerDemand = allDemands.find(d => d.userPhone === buyerPhone);
+  const buyerDemand = allDemands.find((d) => d.userPhone === buyerPhone);
   await api.releaseHold({ itemId: reservedBook.itemId, demandId: buyerDemand?.demandId });
 
   // 4. Verify book returned to active status
   const updatedBooks = await api.listInventoryBySeller(sellerPhone);
-  const releasedBook = updatedBooks.find(b => b.itemId === reservedBook.itemId);
+  const releasedBook = updatedBooks.find((b) => b.itemId === reservedBook.itemId);
   assert.strictEqual(releasedBook?.status, 'active');
   assert.strictEqual(releasedBook?.reservedUntil, undefined);
   assert.strictEqual(releasedBook?.reservedForPhone, undefined);
 
   // 5. Verify demand returned to pending status
   const finalDemands = await api.listDemands();
-  const updatedDemand = finalDemands.find(d => d.userPhone === buyerPhone);
+  const updatedDemand = finalDemands.find((d) => d.userPhone === buyerPhone);
   assert.strictEqual(updatedDemand?.status, 'pending');
 });
 
@@ -473,11 +534,13 @@ test('handover confirmation: seller texting SOLD marks book as sold and fulfills
   });
 
   assert.strictEqual(soldRes.success, true);
-  assert.ok(soldRes.result.replyMessage?.includes('sold') || soldRes.result.replyMessage?.includes('vendu'));
+  assert.ok(
+    soldRes.result.replyMessage?.includes('sold') || soldRes.result.replyMessage?.includes('vendu')
+  );
 
   // Verify book is marked as 'sold'
   const sellerBooks = await api.listInventoryBySeller(sellerPhone);
-  const soldBook = sellerBooks.find(b => b.concept.includes('Year2'));
+  const soldBook = sellerBooks.find((b) => b.concept.includes('Year2'));
   assert.ok(soldBook);
   assert.strictEqual(soldBook.status, 'sold');
 });
@@ -486,7 +549,6 @@ test('handover confirmation: seller texting SOLD marks book as sold and fulfills
 
 test('bilingual routing: preserves parent languages accurately across matches', async () => {
   const sellerFr = '+33611223344';
-  const buyerEn = '+15559988776';
 
   // French seller offers a book
   const offerRes = await api.handleWebhook({
@@ -497,7 +559,11 @@ test('bilingual routing: preserves parent languages accurately across matches', 
 
   const sellerItems = await api.listInventoryBySeller(sellerFr);
   assert.ok(sellerItems.length >= 1);
-  assert.strictEqual(sellerItems[0].preferredLang, 'fr', 'Must store French language preference for seller');
+  assert.strictEqual(
+    sellerItems[0].preferredLang,
+    'fr',
+    'Must store French language preference for seller'
+  );
 });
 
 // ─── 18. Autonomous Strands Agent Integration (Hackathon) ───────────────────
@@ -513,7 +579,7 @@ test('strands agent: chatWithAgent provides multi-turn conversational AI for par
 
 test('whatsapp interactive list: handles browse_year list_reply and returns interactive subject list', async () => {
   const buyerPhone = '+15554433221';
-  
+
   // First ensure there is at least one book in Year 5
   await api.handleWebhook({
     from_phone: '+15559990001',
@@ -532,7 +598,9 @@ test('whatsapp interactive list: handles browse_year list_reply and returns inte
 
   assert.strictEqual(res.success, true);
   assert.strictEqual(res.result.status, 'processed');
-  assert.ok(res.result.replyMessage?.includes('Year 5') || res.result.replyMessage?.includes('Année 5'));
+  assert.ok(
+    res.result.replyMessage?.includes('Year 5') || res.result.replyMessage?.includes('Année 5')
+  );
 });
 
 test('whatsapp interactive list: 1-tap book request via list_reply auto-matches with active inventory', async () => {
@@ -541,10 +609,12 @@ test('whatsapp interactive list: 1-tap book request via list_reply auto-matches 
 
   // Clean stale German items and demands from previous test runs
   const [allDemands, allInv] = await Promise.all([api.listDemands(), api.listInventory()]);
-  for (const d of allDemands.filter(d => /German/i.test(d.concept) || /German/i.test(d.requestedQuery))) {
+  for (const d of allDemands.filter(
+    (d) => /German/i.test(d.concept) || /German/i.test(d.requestedQuery)
+  )) {
     await api.deleteDemand(d.demandId);
   }
-  for (const i of allInv.filter(i => /German/i.test(i.concept) || /German/i.test(i.title))) {
+  for (const i of allInv.filter((i) => /German/i.test(i.concept) || /German/i.test(i.title))) {
     await api.deleteInventory(i.itemId);
   }
 
@@ -657,7 +727,10 @@ test('whatsapp interactive confirmation: user tapping cancel cancels request cle
   });
   assert.strictEqual(cancelRes.success, true);
   assert.strictEqual(cancelRes.result.status, 'processed');
-  assert.ok(cancelRes.result.replyMessage?.includes('Request cancelled') || cancelRes.result.replyMessage?.includes('annulée'));
+  assert.ok(
+    cancelRes.result.replyMessage?.includes('Request cancelled') ||
+      cancelRes.result.replyMessage?.includes('annulée')
+  );
 });
 
 test('whatsapp catalog text fast-path: user typing "Year 3" receives interactive year subjects', async () => {
@@ -668,7 +741,9 @@ test('whatsapp catalog text fast-path: user typing "Year 3" receives interactive
   });
   assert.strictEqual(res.success, true);
   assert.strictEqual(res.result.status, 'processed');
-  assert.ok(res.result.replyMessage?.includes('Year 3') || res.result.replyMessage?.includes('Année 3'));
+  assert.ok(
+    res.result.replyMessage?.includes('Year 3') || res.result.replyMessage?.includes('Année 3')
+  );
 });
 
 test('whatsapp bilingual catalog: user typing "catalogue" receives French interactive list message', async () => {
@@ -702,8 +777,15 @@ test('whatsapp demand board: user typing "demandes" receives translated French l
   assert.strictEqual(res.success, true);
   assert.strictEqual(res.result.status, 'processed');
   // Verify that the response contains French demand board header and guidance
-  assert.ok(res.result.replyMessage?.includes('Livres Recherchés par les Parents') || res.result.replyMessage?.includes('demandés'));
-  assert.ok(res.result.replyMessage?.includes('💡') || res.result.replyMessage?.includes('Matière') || res.result.replyMessage?.includes('Année'));
+  assert.ok(
+    res.result.replyMessage?.includes('Livres Recherchés par les Parents') ||
+      res.result.replyMessage?.includes('demandés')
+  );
+  assert.ok(
+    res.result.replyMessage?.includes('💡') ||
+      res.result.replyMessage?.includes('Matière') ||
+      res.result.replyMessage?.includes('Année')
+  );
 });
 
 test('whatsapp offer inquiry: parent stating offering books receives guidance instead of looking for science hallucination', async () => {
@@ -758,21 +840,28 @@ Biology`;
   });
 
   assert.strictEqual(res.success, true);
-  assert.ok((res.result?.extractedIntentsCount || 0) >= 5, 'Should extract individual subjects from list');
+  assert.ok(
+    (res.result?.extractedIntentsCount || 0) >= 5,
+    'Should extract individual subjects from list'
+  );
 
   // Verify all registered books in seller inventory
   const sellerBooks = await api.listInventoryBySeller(seller);
   assert.ok(sellerBooks.length >= 5, 'Must have listed multiple books in inventory');
 
-  const concepts = sellerBooks.map(b => b.concept);
-  assert.ok(concepts.some(c => c.includes('Chemistry')));
-  assert.ok(concepts.some(c => c.includes('Physics')));
-  assert.ok(concepts.some(c => c.includes('Biology')));
-  assert.ok(concepts.some(c => c.includes('Math')));
-  assert.ok(concepts.some(c => c.includes('Economics')));
+  const concepts = sellerBooks.map((b) => b.concept);
+  assert.ok(concepts.some((c) => c.includes('Chemistry')));
+  assert.ok(concepts.some((c) => c.includes('Physics')));
+  assert.ok(concepts.some((c) => c.includes('Biology')));
+  assert.ok(concepts.some((c) => c.includes('Math')));
+  assert.ok(concepts.some((c) => c.includes('Economics')));
 
   // Verify response message confirms the listed books warmly
-  assert.ok(res.result.replyMessage?.includes('listed in school catalog') || res.result.replyMessage?.includes('livres ajoutés') || res.result.replyMessage?.includes('books'));
+  assert.ok(
+    res.result.replyMessage?.includes('listed in school catalog') ||
+      res.result.replyMessage?.includes('livres ajoutés') ||
+      res.result.replyMessage?.includes('books')
+  );
 });
 
 test('grade matching: general year 9 demand matches across all parents with books for that year', async () => {
@@ -783,7 +872,9 @@ test('grade matching: general year 9 demand matches across all parents with book
 
   // Clean any stale pending demands for Year 9 from prior test runs
   const existingDemands = await api.listDemands();
-  for (const d of existingDemands.filter(d => d.status === 'pending' && /Year9/i.test(d.concept))) {
+  for (const d of existingDemands.filter(
+    (d) => d.status === 'pending' && /Year9/i.test(d.concept)
+  )) {
     await api.deleteDemand(d.demandId);
   }
 
@@ -812,8 +903,12 @@ test('grade matching: general year 9 demand matches across all parents with book
   const sellerABooks = await api.listInventoryBySeller(sellerA);
   const sellerBBooks = await api.listInventoryBySeller(sellerB);
 
-  const reservedA = sellerABooks.find(b => b.reservedForPhone === buyer && b.status === 'reserved');
-  const reservedB = sellerBBooks.find(b => b.reservedForPhone === buyer && b.status === 'reserved');
+  const reservedA = sellerABooks.find(
+    (b) => b.reservedForPhone === buyer && b.status === 'reserved'
+  );
+  const reservedB = sellerBBooks.find(
+    (b) => b.reservedForPhone === buyer && b.status === 'reserved'
+  );
 
   assert.ok(reservedA, 'Seller A books must be reserved for the buyer');
   assert.ok(reservedB, 'Seller B books must be reserved for the buyer');
@@ -827,16 +922,12 @@ test('grade matching: general year 9 demand matches across all parents with book
   });
 
   assert.strictEqual(whichParentRes.success, true);
-  assert.ok(whichParentRes.result.replyMessage?.includes('Parent 1') || whichParentRes.result.replyMessage?.includes(sellerA));
-  assert.ok(whichParentRes.result.replyMessage?.includes('Parent 2') || whichParentRes.result.replyMessage?.includes(sellerB));
+  assert.ok(
+    whichParentRes.result.replyMessage?.includes('Parent 1') ||
+      whichParentRes.result.replyMessage?.includes(sellerA)
+  );
+  assert.ok(
+    whichParentRes.result.replyMessage?.includes('Parent 2') ||
+      whichParentRes.result.replyMessage?.includes(sellerB)
+  );
 });
-
-
-
-
-
-
-
-
-
-

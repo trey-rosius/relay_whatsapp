@@ -7,8 +7,9 @@ This guide provides the complete, end-to-end process for setting up a **Meta Fac
 ## 📌 Prerequisites
 
 Before starting, ensure you have:
+
 1. A personal **Facebook Account** (used to log into Meta Developers).
-2. A **Phone Number** dedicated to your WhatsApp bot (SMS or Voice call capable). 
+2. A **Phone Number** dedicated to your WhatsApp bot (SMS or Voice call capable).
    > ⚠️ **Important:** The phone number must **not** be registered on an active personal/business WhatsApp mobile app. If it is, delete the account in the WhatsApp app settings first.
 
 ---
@@ -48,6 +49,7 @@ Temporary test tokens expire in 24 hours. To run a 24/7 production bot, you must
 5. Click **Create System User**.
 
 ### Assign Assets to System User:
+
 1. Select your new System User and click **Assign Assets**.
 2. Under **Apps**, select your app (`Relay Community Books App`).
 3. Toggle on **Full Control (Manage App)**.
@@ -82,7 +84,7 @@ Temporary test tokens expire in 24 hours. To run a 24/7 production bot, you must
 5. Enter your dedicated phone number with country code (e.g., `+237...` or `+1...`).
 6. Choose verification method: **Text Message (SMS)** or **Voice Call**.
 7. Enter the 6-digit verification code sent to your phone.
-8. Once verified, copy your **Phone Number ID** (e.g. `1251548201371379`).
+8. Once verified, copy your **Phone Number ID** (e.g. `<YOUR_PHONE_NUMBER_ID>`).
 
 ---
 
@@ -91,8 +93,8 @@ Temporary test tokens expire in 24 hours. To run a 24/7 production bot, you must
 1. In the left menu under **WhatsApp**, click **Configuration**.
 2. Under **Webhook**, click **Edit**.
 3. Set fields:
-   - **Callback URL:** `https://0bur1ooy7b.execute-api.us-east-1.amazonaws.com/prod/webhook`
-   - **Verify Token:** `my_verify_token_123` (or your custom secret phrase).
+   - **Callback URL:** `https://<YOUR_API_GATEWAY_ID>.execute-api.us-east-1.amazonaws.com/prod/webhook`
+   - **Verify Token:** `your_verify_token_here` (or your custom secret phrase).
 4. Click **Verify and Save**.
 5. Under **Webhook Fields**, find **messages** and click **Subscribe**.
 
@@ -104,6 +106,6 @@ Update your production `.env` or deployment settings with the values obtained:
 
 ```env
 WHATSAPP_TOKEN=EAAG... (Permanent System User Token from Step 4)
-WHATSAPP_VERIFY_TOKEN=my_verify_token_123 (Verify Token from Step 6)
-WHATSAPP_PHONE_NUMBER_ID=1251548201371379 (Phone Number ID from Step 5)
+WHATSAPP_VERIFY_TOKEN=your_verify_token_here (Verify Token from Step 6)
+WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id_here (Phone Number ID from Step 5)
 ```

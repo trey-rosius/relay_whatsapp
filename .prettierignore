@@ -1,0 +1,10 @@
+node_modules
+dist
+cdk.out
+.hosting
+.blocks-sandbox
+.bb-data
+build-temp
+package-lock.json
+*.drawio
+.blocks

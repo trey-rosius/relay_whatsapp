@@ -3,19 +3,12 @@
     "target": "ES2022",
     "module": "ES2022",
     "moduleResolution": "bundler",
-    "lib": [
-      "ESNext",
-      "DOM"
-    ],
+    "lib": ["ESNext", "DOM"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "outDir": "build-temp"
   },
-  "include": [
-    "src/**/*",
-    "aws-blocks/**/*",
-    "test/**/*"
-  ]
+  "include": ["src/**/*", "aws-blocks/**/*", "test/**/*"]
 }

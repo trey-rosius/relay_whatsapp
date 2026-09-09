@@ -2,9 +2,9 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   resolve: {
-    conditions: ['browser']
+    conditions: ['browser'],
   },
   build: {
-    outDir: 'dist'
-  }
+    outDir: 'dist',
+  },
 });

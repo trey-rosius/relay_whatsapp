@@ -16,7 +16,6 @@ import {
   inferDomainFromConcept,
   formatDemandDisplay,
   parseParentMessageIntentsWithLLM,
-  formatPhoneNumber,
   normalizeTextForMatching,
   detectMessageLanguage,
   buildBuyerMatchMessage,
@@ -100,7 +99,10 @@ Respond ONLY with valid JSON inside a \`\`\`json block.`;
 });
 
 test('prompt snapshots: Response Generation Prompt matches approved baseline across all scenarios', () => {
-  const scenarioSnapshots: Record<string, { lang: 'en' | 'fr'; params: Record<string, unknown>; expected: string }> = {
+  const scenarioSnapshots: Record<
+    string,
+    { lang: 'en' | 'fr'; params: Record<string, unknown>; expected: string }
+  > = {
     listing_active_en: {
       lang: 'en',
       params: { title: 'Year 8 Chemistry Textbook' },
@@ -205,8 +207,12 @@ Guidelines:
 test('governance: cryptographic SHA-256 checksums prevent inadvertent prompt drift across iterations', () => {
   // Deterministic canonical templates
   const canonicalIntentPrompt = buildIntentClassificationPrompt('__CANONICAL_USER_MESSAGE__');
-  const canonicalLLMPromptEn = buildLLMMessagePrompt('listing_active', 'en', { title: '__CANONICAL_TITLE__' });
-  const canonicalLLMPromptFr = buildLLMMessagePrompt('listing_active', 'fr', { title: '__CANONICAL_TITLE__' });
+  const canonicalLLMPromptEn = buildLLMMessagePrompt('listing_active', 'en', {
+    title: '__CANONICAL_TITLE__',
+  });
+  const canonicalLLMPromptFr = buildLLMMessagePrompt('listing_active', 'fr', {
+    title: '__CANONICAL_TITLE__',
+  });
   const canonicalHelpEn = getHelpMessage('en');
   const canonicalHelpFr = getHelpMessage('fr');
 
@@ -262,19 +268,33 @@ test('prompt invariants: Intent Classification Prompt contract enforces system i
 
   // 1. Role & Identity
   assert.ok(
-    prompt.includes('AI intent classification engine for a bilingual (English & French) parent school book marketplace bot on WhatsApp'),
+    prompt.includes(
+      'AI intent classification engine for a bilingual (English & French) parent school book marketplace bot on WhatsApp'
+    ),
     'Missing or modified AI intent engine identity'
   );
 
   // 2. Exact Categories
   assert.ok(prompt.includes('1. "greeting":'), 'Missing greeting category in intent prompt');
   assert.ok(prompt.includes('2. "catalog":'), 'Missing catalog category in intent prompt');
-  assert.ok(prompt.includes('3. "demand_board":'), 'Missing demand_board category in intent prompt');
-  assert.ok(prompt.includes('4. "offer_inquiry":'), 'Missing offer_inquiry category in intent prompt');
-  assert.ok(prompt.includes('5. "demand_inquiry":'), 'Missing demand_inquiry category in intent prompt');
+  assert.ok(
+    prompt.includes('3. "demand_board":'),
+    'Missing demand_board category in intent prompt'
+  );
+  assert.ok(
+    prompt.includes('4. "offer_inquiry":'),
+    'Missing offer_inquiry category in intent prompt'
+  );
+  assert.ok(
+    prompt.includes('5. "demand_inquiry":'),
+    'Missing demand_inquiry category in intent prompt'
+  );
   assert.ok(prompt.includes('6. "offer":'), 'Missing offer category in intent prompt');
   assert.ok(prompt.includes('7. "demand":'), 'Missing demand category in intent prompt');
-  assert.ok(prompt.includes('8. "confirm_handover":'), 'Missing confirm_handover category in intent prompt');
+  assert.ok(
+    prompt.includes('8. "confirm_handover":'),
+    'Missing confirm_handover category in intent prompt'
+  );
 
   // 3. Strict Schema Properties & Types
   const requiredSchemaKeys = [
@@ -294,7 +314,9 @@ test('prompt invariants: Intent Classification Prompt contract enforces system i
 
   // 4. Anti-Hallucination & Placeholder Rules
   assert.ok(
-    prompt.includes('NEVER output placeholder strings like "Books for Year <N> <Subject>" or "Year N"'),
+    prompt.includes(
+      'NEVER output placeholder strings like "Books for Year <N> <Subject>" or "Year N"'
+    ),
     'Missing anti-placeholder rule in prompt'
   );
   assert.ok(
@@ -332,22 +354,42 @@ test('prompt invariants: Response Generation Prompt contract enforces scenario s
       title: 'Chemistry Book for Year 3',
       phone: '+XXXXXXXX1234 (redacted)',
     });
-    assert.ok(enPrompt.includes(`Scenario: ${scenario}`), `English prompt missing scenario: ${scenario}`);
-    assert.ok(enPrompt.includes('Target Language: English'), 'English prompt must specify English target language');
-    assert.ok(enPrompt.includes('Include relevant emojis (📚, 👋, 🤝, 💡).'), 'Missing emoji guidelines');
-    assert.ok(enPrompt.includes('Output ONLY the message text. Do NOT wrap in quotes or code blocks.'), 'Missing single-output rule');
+    assert.ok(
+      enPrompt.includes(`Scenario: ${scenario}`),
+      `English prompt missing scenario: ${scenario}`
+    );
+    assert.ok(
+      enPrompt.includes('Target Language: English'),
+      'English prompt must specify English target language'
+    );
+    assert.ok(
+      enPrompt.includes('Include relevant emojis (📚, 👋, 🤝, 💡).'),
+      'Missing emoji guidelines'
+    );
+    assert.ok(
+      enPrompt.includes('Output ONLY the message text. Do NOT wrap in quotes or code blocks.'),
+      'Missing single-output rule'
+    );
     assert.ok(enPrompt.includes('Context Data:'), 'Missing Context Data key');
 
     // French Prompt Verification
     const frPrompt = buildLLMMessagePrompt(scenario, 'fr', {
       title: 'Manuel de Physique 3ème',
     });
-    assert.ok(frPrompt.includes(`Scenario: ${scenario}`), `French prompt missing scenario: ${scenario}`);
-    assert.ok(frPrompt.includes('Target Language: French'), 'French prompt must specify French target language');
+    assert.ok(
+      frPrompt.includes(`Scenario: ${scenario}`),
+      `French prompt missing scenario: ${scenario}`
+    );
+    assert.ok(
+      frPrompt.includes('Target Language: French'),
+      'French prompt must specify French target language'
+    );
   }
 
   // Year clarification specific requirement
-  const clarifyPrompt = buildLLMMessagePrompt('year_clarification', 'en', { title: 'Biology Textbook' });
+  const clarifyPrompt = buildLLMMessagePrompt('year_clarification', 'en', {
+    title: 'Biology Textbook',
+  });
   assert.ok(
     clarifyPrompt.includes('politely ask the parent which school year / grade'),
     'Missing school year clarification instruction'
@@ -430,7 +472,8 @@ test('security: pre-prompt PII redaction cleans sensitive identifiers across int
   assert.ok(maskedEmail.includes('[EMAIL_REDACTED]'), 'Missing [EMAIL_REDACTED] token');
 
   // Physical address
-  const rawWithAddress = 'Pick up at 45 Avenue Victor Hugo or 123 Main Street for Chemistry Year 10';
+  const rawWithAddress =
+    'Pick up at 45 Avenue Victor Hugo or 123 Main Street for Chemistry Year 10';
   const maskedAddress = maskPromptPII(rawWithAddress);
   assert.ok(!maskedAddress.includes('45 Avenue Victor Hugo'), 'Address 1 was not redacted');
   assert.ok(!maskedAddress.includes('123 Main Street'), 'Address 2 was not redacted');
@@ -439,7 +482,11 @@ test('security: pre-prompt PII redaction cleans sensitive identifiers across int
   // Clean text with numbers (years, grades) must remain untouched
   const rawClean = 'I have Chemistry for Year 10 and Physics for Grade 12 in good condition';
   const maskedClean = maskPromptPII(rawClean);
-  assert.strictEqual(maskedClean, rawClean, 'Clean non-PII text with grades and years must not be altered');
+  assert.strictEqual(
+    maskedClean,
+    rawClean,
+    'Clean non-PII text with grades and years must not be altered'
+  );
 });
 
 // ─── 6. Multi-Iteration Determinism & Immutability Simulation ──────────────────
@@ -501,7 +548,10 @@ test('stability: prompt formatting handles edge cases, special characters, and i
   for (const input of edgeCases) {
     const prompt = buildIntentClassificationPrompt(input);
     assert.ok(prompt.length > 0, 'Prompt must not be empty');
-    assert.ok(prompt.includes('Respond ONLY with valid JSON inside a ```json block.'), 'Must retain terminal JSON directive');
+    assert.ok(
+      prompt.includes('Respond ONLY with valid JSON inside a ```json block.'),
+      'Must retain terminal JSON directive'
+    );
     assert.ok(prompt.includes('Categories of intent:'), 'Must retain categories header');
   }
 });
@@ -548,7 +598,10 @@ test('whatsapp catalog: formats verified condition and quality badges correctly 
 
   const catalogTextFr = buildGroupedCatalogText(mockInventory, 'fr');
   assert.ok(catalogTextFr.includes('Neuf'), 'French catalog must include Neuf condition');
-  assert.ok(catalogTextFr.includes('Comme Neuf'), 'French catalog must include Comme Neuf condition');
+  assert.ok(
+    catalogTextFr.includes('Comme Neuf'),
+    'French catalog must include Comme Neuf condition'
+  );
 });
 
 // ─── 4. WhatsApp Interactive List Messages Unit Tests ────────────────────────
@@ -569,7 +622,10 @@ test('whatsapp interactive list: enforces Meta constraints on top-level catalog 
   assert.ok(payloadEn.header?.text, 'Header text must be present');
   assert.ok(payloadEn.header.text.length <= 60, 'Header must be <= 60 chars');
   assert.ok(payloadEn.body.text.length <= 1024, 'Body must be <= 1024 chars');
-  assert.ok(payloadEn.footer?.text && payloadEn.footer.text.length <= 60, 'Footer must be <= 60 chars');
+  assert.ok(
+    payloadEn.footer?.text && payloadEn.footer.text.length <= 60,
+    'Footer must be <= 60 chars'
+  );
   assert.ok(payloadEn.action.button.length <= 20, 'Action button must be <= 20 chars');
 
   const rows = payloadEn.action.sections[0].rows;
@@ -580,14 +636,20 @@ test('whatsapp interactive list: enforces Meta constraints on top-level catalog 
     assert.ok(row.id.startsWith('browse_year_'), 'Row ID must follow browse_year convention');
     assert.ok(row.title.length <= 24, `Row title "${row.title}" must be <= 24 chars`);
     if (row.description) {
-      assert.ok(row.description.length <= 72, `Row description "${row.description}" must be <= 72 chars`);
+      assert.ok(
+        row.description.length <= 72,
+        `Row description "${row.description}" must be <= 72 chars`
+      );
     }
   }
 
   // Verify French localization
   const payloadFr = buildInteractiveCatalogPayload(mockInventory, 'fr');
   assert.ok(payloadFr.action.button.length <= 20, 'French action button must be <= 20 chars');
-  assert.ok(payloadFr.action.sections[0].rows[0].title.includes('Année'), 'French title must use Année');
+  assert.ok(
+    payloadFr.action.sections[0].rows[0].title.includes('Année'),
+    'French title must use Année'
+  );
 });
 
 test('whatsapp interactive list: handles overflow when more than 10 school grades exist', () => {
@@ -608,7 +670,10 @@ test('whatsapp interactive list: handles overflow when more than 10 school grade
   const lastRow = rows[9];
   assert.strictEqual(lastRow.id, 'browse_year_other');
   assert.strictEqual(lastRow.title, 'Other Grades');
-  assert.ok(lastRow.description?.includes('other grades'), 'Overflow row description must mention remaining grades');
+  assert.ok(
+    lastRow.description?.includes('other grades'),
+    'Overflow row description must mention remaining grades'
+  );
 });
 
 test('whatsapp interactive list: enforces Meta constraints on year drill-down subjects list', () => {
@@ -624,25 +689,37 @@ test('whatsapp interactive list: enforces Meta constraints on year drill-down su
   const yearPayload = buildInteractiveYearSubjectsPayload('Year 5', mockInventory, 'en');
   assert.strictEqual(yearPayload.type, 'list');
   assert.ok(yearPayload.header?.text.includes('Year 5'), 'Header must reference Year 5');
-  assert.ok(yearPayload.header?.text && yearPayload.header.text.length <= 60, 'Header must be <= 60 chars');
+  assert.ok(
+    yearPayload.header?.text && yearPayload.header.text.length <= 60,
+    'Header must be <= 60 chars'
+  );
   assert.ok(yearPayload.action.button.length <= 20, 'Action button must be <= 20 chars');
 
   const rows = yearPayload.action.sections[0].rows;
   assert.strictEqual(rows.length, 4, 'Must contain 4 distinct subjects for Year 5');
 
   for (const row of rows) {
-    assert.ok(row.id.startsWith('request_concept_'), 'Subject row ID must start with request_concept_');
+    assert.ok(
+      row.id.startsWith('request_concept_'),
+      'Subject row ID must start with request_concept_'
+    );
     assert.ok(row.title.length <= 24, `Subject title "${row.title}" must be <= 24 chars`);
     if (row.description) {
-      assert.ok(row.description.length <= 72, `Subject description "${row.description}" must be <= 72 chars`);
+      assert.ok(
+        row.description.length <= 72,
+        `Subject description "${row.description}" must be <= 72 chars`
+      );
     }
   }
 
   // Check chemistry count & badge
-  const chemRow = rows.find(r => r.title === 'Chemistry');
+  const chemRow = rows.find((r) => r.title === 'Chemistry');
   assert.ok(chemRow, 'Chemistry subject row must exist');
   assert.ok(chemRow.description?.includes('2 avail'), 'Chemistry count must reflect 2 available');
-  assert.ok(chemRow.description?.includes('Like New'), 'Chemistry condition badge must be included');
+  assert.ok(
+    chemRow.description?.includes('Like New'),
+    'Chemistry condition badge must be included'
+  );
 });
 
 test('whatsapp interactive list: body text includes formatted summary bullets for fast readability', () => {
@@ -650,18 +727,37 @@ test('whatsapp interactive list: body text includes formatted summary bullets fo
     { title: 'Books for Year 3 Mathematics', conditionType: 'New', concept: 'Year3Mathematics' },
     { title: 'Books for Year 3 Science', conditionType: 'Good', concept: 'Year3Science' },
     { title: 'Books for Year 3 English', conditionType: 'New', concept: 'Year3English' },
-    { title: 'Books for Year 3 General Textbooks', conditionType: 'Good', concept: 'Year3GeneralTextbooks' },
+    {
+      title: 'Books for Year 3 General Textbooks',
+      conditionType: 'Good',
+      concept: 'Year3GeneralTextbooks',
+    },
   ];
 
   const yearPayloadEn = buildInteractiveYearSubjectsPayload('Year 3', mockInventory, 'en');
-  assert.ok(yearPayloadEn.body.text.includes('• *Mathematics* (1 avail — New)'), 'Must include Mathematics summary');
-  assert.ok(yearPayloadEn.body.text.includes('• *Science* (1 avail — Good)'), 'Must include Science summary');
-  assert.ok(yearPayloadEn.body.text.includes('Tap *Select Book* below'), 'Must include tap instruction');
+  assert.ok(
+    yearPayloadEn.body.text.includes('• *Mathematics* (1 avail — New)'),
+    'Must include Mathematics summary'
+  );
+  assert.ok(
+    yearPayloadEn.body.text.includes('• *Science* (1 avail — Good)'),
+    'Must include Science summary'
+  );
+  assert.ok(
+    yearPayloadEn.body.text.includes('Tap *Select Book* below'),
+    'Must include tap instruction'
+  );
   assert.ok(yearPayloadEn.body.text.length <= 1024, 'Body text must not exceed 1024 chars');
 
   const yearPayloadFr = buildInteractiveYearSubjectsPayload('Année 3', mockInventory, 'fr');
-  assert.ok(yearPayloadFr.body.text.includes('• *Mathématiques* (1 dispo — Neuf)'), 'French summary must translate properly');
-  assert.ok(yearPayloadFr.body.text.includes('Choisir un livre'), 'French instruction must translate properly');
+  assert.ok(
+    yearPayloadFr.body.text.includes('• *Mathématiques* (1 dispo — Neuf)'),
+    'French summary must translate properly'
+  );
+  assert.ok(
+    yearPayloadFr.body.text.includes('Choisir un livre'),
+    'French instruction must translate properly'
+  );
   assert.ok(yearPayloadFr.body.text.length <= 1024, 'French body text must not exceed 1024 chars');
 });
 
@@ -686,34 +782,79 @@ test('whatsapp interactive helpers: string truncation and domain inference handl
 
 test('whatsapp interactive confirmation: builds 2-button confirmation prompt with book details', () => {
   const mockInventory = [
-    { title: 'Books for Year 3 Mathematics', conditionType: 'LikeNew', concept: 'Year3Mathematics' },
+    {
+      title: 'Books for Year 3 Mathematics',
+      conditionType: 'LikeNew',
+      concept: 'Year3Mathematics',
+    },
   ];
 
-  const confirmPayloadEn = buildInteractiveRequestConfirmationPayload('request_concept_Year3Mathematics', mockInventory, 'en');
+  const confirmPayloadEn = buildInteractiveRequestConfirmationPayload(
+    'request_concept_Year3Mathematics',
+    mockInventory,
+    'en'
+  );
   assert.strictEqual(confirmPayloadEn.type, 'button');
   assert.ok(confirmPayloadEn.header?.text.includes('Confirm'), 'Header must reference Confirm');
-  assert.ok(confirmPayloadEn.body.text.includes('Mathematics (Year 3)'), 'Body must show book title and grade');
+  assert.ok(
+    confirmPayloadEn.body.text.includes('Mathematics (Year 3)'),
+    'Body must show book title and grade'
+  );
   assert.ok(confirmPayloadEn.body.text.includes('Like New'), 'Body must show verified condition');
-  assert.strictEqual(confirmPayloadEn.action.buttons.length, 2, 'Must provide exactly 2 buttons: Confirm and Cancel');
+  assert.strictEqual(
+    confirmPayloadEn.action.buttons.length,
+    2,
+    'Must provide exactly 2 buttons: Confirm and Cancel'
+  );
   assert.strictEqual(confirmPayloadEn.action.buttons[0].reply.id, 'confirm_req_Year3Mathematics');
   assert.strictEqual(confirmPayloadEn.action.buttons[1].reply.id, 'cancel_request');
-  assert.ok(confirmPayloadEn.action.buttons[0].reply.title.length <= 20, 'Confirm button title <= 20 chars');
-  assert.ok(confirmPayloadEn.action.buttons[1].reply.title.length <= 20, 'Cancel button title <= 20 chars');
+  assert.ok(
+    confirmPayloadEn.action.buttons[0].reply.title.length <= 20,
+    'Confirm button title <= 20 chars'
+  );
+  assert.ok(
+    confirmPayloadEn.action.buttons[1].reply.title.length <= 20,
+    'Cancel button title <= 20 chars'
+  );
 
-  const confirmPayloadFr = buildInteractiveRequestConfirmationPayload('request_concept_Year3Mathematics', mockInventory, 'fr');
-  assert.ok(confirmPayloadFr.body.text.includes('Mathématiques (Année 3)'), 'French body must localize subject and year');
-  assert.ok(confirmPayloadFr.body.text.includes('Comme Neuf'), 'French body must localize condition');
-  assert.ok(confirmPayloadFr.action.buttons[0].reply.title.includes('Confirmer'), 'French confirm button title');
-  assert.ok(confirmPayloadFr.action.buttons[1].reply.title.includes('Annuler'), 'French cancel button title');
+  const confirmPayloadFr = buildInteractiveRequestConfirmationPayload(
+    'request_concept_Year3Mathematics',
+    mockInventory,
+    'fr'
+  );
+  assert.ok(
+    confirmPayloadFr.body.text.includes('Mathématiques (Année 3)'),
+    'French body must localize subject and year'
+  );
+  assert.ok(
+    confirmPayloadFr.body.text.includes('Comme Neuf'),
+    'French body must localize condition'
+  );
+  assert.ok(
+    confirmPayloadFr.action.buttons[0].reply.title.includes('Confirmer'),
+    'French confirm button title'
+  );
+  assert.ok(
+    confirmPayloadFr.action.buttons[1].reply.title.includes('Annuler'),
+    'French cancel button title'
+  );
 });
 
 test('whatsapp interactive list: guarantees strictly unique row IDs even when items share generic concept', () => {
   // Simulate Year 12 inventory where 4 distinct subjects share concept "Year12Books"
   const year12Inventory = [
     { title: 'Books for Year 12 Mathematics', conditionType: 'New', concept: 'Year12Mathematics' },
-    { title: 'Books for Year 12 Probability & Statistics', conditionType: 'New', concept: 'Year12Books' },
+    {
+      title: 'Books for Year 12 Probability & Statistics',
+      conditionType: 'New',
+      concept: 'Year12Books',
+    },
     { title: 'Books for Year 12 General Textbooks', conditionType: 'Good', concept: 'Year12Books' },
-    { title: 'Books for Year 12 Further mathematics Coursebook', conditionType: 'New', concept: 'Year12Mathematics' },
+    {
+      title: 'Books for Year 12 Further mathematics Coursebook',
+      conditionType: 'New',
+      concept: 'Year12Mathematics',
+    },
     { title: 'Books for Year 12 Chemistry', conditionType: 'New', concept: 'Year12Chemistry' },
     { title: 'Books for Year 12 Physics', conditionType: 'New', concept: 'Year12Books' },
   ];
@@ -724,11 +865,19 @@ test('whatsapp interactive list: guarantees strictly unique row IDs even when it
   const rowIds = rows.map((r) => r.id);
   const uniqueRowIds = new Set(rowIds);
 
-  assert.strictEqual(rowIds.length, uniqueRowIds.size, 'All row IDs in the interactive list must be strictly unique');
+  assert.strictEqual(
+    rowIds.length,
+    uniqueRowIds.size,
+    'All row IDs in the interactive list must be strictly unique'
+  );
   assert.strictEqual(rows.length, 6, 'Must contain all 6 distinct subjects');
 
   for (const id of rowIds) {
-    assert.match(id, /^request_concept_[a-zA-Z0-9_]+$/, `Row ID "${id}" must be valid alphanumeric without spaces`);
+    assert.match(
+      id,
+      /^request_concept_[a-zA-Z0-9_]+$/,
+      `Row ID "${id}" must be valid alphanumeric without spaces`
+    );
   }
 });
 
@@ -775,8 +924,14 @@ test('whatsapp subject catalog: declarative normalization strips suffixes and ha
   // Coursebooks & Learner's books
   assert.strictEqual(cleanSubjectName("Global English Learner's book", 'en'), 'English');
   assert.strictEqual(cleanSubjectName("Global English Learner's book", 'fr'), 'Anglais');
-  assert.strictEqual(cleanSubjectName('Cambridge IGCSE Further Mathematics Coursebook', 'en'), 'Further Mathematics');
-  assert.strictEqual(cleanSubjectName('Cambridge IGCSE Further Mathematics Coursebook', 'fr'), 'Mathématiques Complémentaires');
+  assert.strictEqual(
+    cleanSubjectName('Cambridge IGCSE Further Mathematics Coursebook', 'en'),
+    'Further Mathematics'
+  );
+  assert.strictEqual(
+    cleanSubjectName('Cambridge IGCSE Further Mathematics Coursebook', 'fr'),
+    'Mathématiques Complémentaires'
+  );
   assert.strictEqual(cleanSubjectName('Physics Student Book', 'fr'), 'Physique');
   assert.strictEqual(cleanSubjectName('Computer Science Workbook', 'fr'), 'Informatique');
 
@@ -814,7 +969,10 @@ test('whatsapp offer inquiry: parent stating they are offering books receives he
   assert.strictEqual(res1[0].intent, 'offer_inquiry');
   assert.strictEqual(res1[0].lang, 'en');
   assert.ok(res1[0].replyMessage?.includes('Thank you for offering books'));
-  assert.ok(res1[0].replyMessage?.includes('send a photo') || res1[0].replyMessage?.includes('list of books'));
+  assert.ok(
+    res1[0].replyMessage?.includes('send a photo') ||
+      res1[0].replyMessage?.includes('list of books')
+  );
 
   const res2 = await parseParentMessageIntentsWithLLM("i'm offering");
   assert.strictEqual(res2.length, 1);
@@ -822,11 +980,11 @@ test('whatsapp offer inquiry: parent stating they are offering books receives he
   assert.strictEqual(res2[0].lang, 'en');
   assert.ok(res2[0].replyMessage?.includes('Thank you for offering books'));
 
-  const res3 = await parseParentMessageIntentsWithLLM("ofering");
+  const res3 = await parseParentMessageIntentsWithLLM('ofering');
   assert.strictEqual(res3.length, 1);
   assert.strictEqual(res3[0].intent, 'offer_inquiry');
 
-  const res4 = await parseParentMessageIntentsWithLLM("offereing");
+  const res4 = await parseParentMessageIntentsWithLLM('offereing');
   assert.strictEqual(res4.length, 1);
   assert.strictEqual(res4[0].intent, 'offer_inquiry');
 
@@ -849,7 +1007,7 @@ test('whatsapp demand inquiry: parent stating looking for books receives search 
   assert.strictEqual(res1[0].lang, 'en');
   assert.ok(res1[0].replyMessage?.includes('What book or school year are you looking for'));
 
-  const res2 = await parseParentMessageIntentsWithLLM("je cherche des livres");
+  const res2 = await parseParentMessageIntentsWithLLM('je cherche des livres');
   assert.strictEqual(res2.length, 1);
   assert.strictEqual(res2[0].intent, 'demand_inquiry');
   assert.strictEqual(res2[0].lang, 'fr');
@@ -867,7 +1025,10 @@ test('match notifications: buildBuyerMatchMessage formats real phone, wa.me link
   assert.ok(enMsg.includes('48 hours'), 'Must mention 48-hour reservation');
   assert.ok(!enMsg.includes('[Your Bot Name]'), 'Must never include [Your Bot Name]');
   assert.ok(!enMsg.includes('[PHONE_REDACTED]'), 'Must never include [PHONE_REDACTED]');
-  assert.ok(!enMsg.includes('If you have the phone number'), 'Must not contain Bedrock hallucinated disclaimer');
+  assert.ok(
+    !enMsg.includes('If you have the phone number'),
+    'Must not contain Bedrock hallucinated disclaimer'
+  );
 
   const frMsg = buildBuyerMatchMessage('Anglais 6ème', '+33612345678', '4321', 'fr');
   assert.ok(frMsg.includes('Anglais 6ème'));
@@ -883,7 +1044,10 @@ test('match notifications: buildSellerMatchMessage formats real phone, wa.me lin
   assert.ok(enMsg.includes('+237670001122'), 'Must include buyer phone');
   assert.ok(enMsg.includes('https://wa.me/237670001122'), 'Must include wa.me link');
   assert.ok(enMsg.includes('#9912'), 'Must include verification code');
-  assert.ok(enMsg.includes('"Sold"') || enMsg.includes('*Sold*'), 'Must instruct seller to reply Sold');
+  assert.ok(
+    enMsg.includes('"Sold"') || enMsg.includes('*Sold*'),
+    'Must instruct seller to reply Sold'
+  );
   assert.ok(!enMsg.includes('[Your Bot Name]'), 'Must never include [Your Bot Name]');
   assert.ok(!enMsg.includes('[PHONE_REDACTED]'), 'Must never include [PHONE_REDACTED]');
 
@@ -955,19 +1119,46 @@ test('phone unmasking guarantee: phone numbers are NEVER redacted across any sce
     for (const lang of ['en', 'fr'] as const) {
       // 1. Buyer match notification
       const buyerMsg = buildBuyerMatchMessage('Year 3 English', phoneItem.raw, '5521', lang);
-      assert.ok(!buyerMsg.includes('[PHONE_REDACTED]'), `Buyer (${lang}) must not contain [PHONE_REDACTED] for ${phoneItem.raw}`);
-      assert.ok(!buyerMsg.toLowerCase().includes('redacted'), `Buyer (${lang}) must not contain "redacted" for ${phoneItem.raw}`);
-      assert.ok(!buyerMsg.includes('[Your Bot Name]'), `Buyer (${lang}) must not contain placeholder bot name`);
-      assert.ok(!buyerMsg.includes('If you have the phone number'), `Buyer (${lang}) must not contain missing-phone disclaimer`);
-      assert.ok(buyerMsg.includes(`https://wa.me/${phoneItem.clean}`), `Buyer (${lang}) must contain wa.me/${phoneItem.clean}`);
+      assert.ok(
+        !buyerMsg.includes('[PHONE_REDACTED]'),
+        `Buyer (${lang}) must not contain [PHONE_REDACTED] for ${phoneItem.raw}`
+      );
+      assert.ok(
+        !buyerMsg.toLowerCase().includes('redacted'),
+        `Buyer (${lang}) must not contain "redacted" for ${phoneItem.raw}`
+      );
+      assert.ok(
+        !buyerMsg.includes('[Your Bot Name]'),
+        `Buyer (${lang}) must not contain placeholder bot name`
+      );
+      assert.ok(
+        !buyerMsg.includes('If you have the phone number'),
+        `Buyer (${lang}) must not contain missing-phone disclaimer`
+      );
+      assert.ok(
+        buyerMsg.includes(`https://wa.me/${phoneItem.clean}`),
+        `Buyer (${lang}) must contain wa.me/${phoneItem.clean}`
+      );
       assert.ok(buyerMsg.includes('#5521'), `Buyer (${lang}) must contain verification code`);
 
       // 2. Seller match notification
       const sellerMsg = buildSellerMatchMessage('Year 3 English', phoneItem.raw, '5521', lang);
-      assert.ok(!sellerMsg.includes('[PHONE_REDACTED]'), `Seller (${lang}) must not contain [PHONE_REDACTED] for ${phoneItem.raw}`);
-      assert.ok(!sellerMsg.toLowerCase().includes('redacted'), `Seller (${lang}) must not contain "redacted" for ${phoneItem.raw}`);
-      assert.ok(!sellerMsg.includes('[Your Bot Name]'), `Seller (${lang}) must not contain placeholder bot name`);
-      assert.ok(sellerMsg.includes(`https://wa.me/${phoneItem.clean}`), `Seller (${lang}) must contain wa.me/${phoneItem.clean}`);
+      assert.ok(
+        !sellerMsg.includes('[PHONE_REDACTED]'),
+        `Seller (${lang}) must not contain [PHONE_REDACTED] for ${phoneItem.raw}`
+      );
+      assert.ok(
+        !sellerMsg.toLowerCase().includes('redacted'),
+        `Seller (${lang}) must not contain "redacted" for ${phoneItem.raw}`
+      );
+      assert.ok(
+        !sellerMsg.includes('[Your Bot Name]'),
+        `Seller (${lang}) must not contain placeholder bot name`
+      );
+      assert.ok(
+        sellerMsg.includes(`https://wa.me/${phoneItem.clean}`),
+        `Seller (${lang}) must contain wa.me/${phoneItem.clean}`
+      );
       assert.ok(sellerMsg.includes('#5521'), `Seller (${lang}) must contain verification code`);
 
       // 3. Runtime generateLLMMessage pipeline
@@ -977,9 +1168,18 @@ test('phone unmasking guarantee: phone numbers are NEVER redacted across any sce
         handoverCode: '5521',
         lang,
       });
-      assert.ok(!runtimeBuyer.includes('[PHONE_REDACTED]'), `Runtime buyer (${lang}) must not redact phone`);
-      assert.ok(!runtimeBuyer.toLowerCase().includes('redacted'), `Runtime buyer (${lang}) must not redact phone`);
-      assert.ok(runtimeBuyer.includes(`https://wa.me/${phoneItem.clean}`), `Runtime buyer (${lang}) must contain direct link`);
+      assert.ok(
+        !runtimeBuyer.includes('[PHONE_REDACTED]'),
+        `Runtime buyer (${lang}) must not redact phone`
+      );
+      assert.ok(
+        !runtimeBuyer.toLowerCase().includes('redacted'),
+        `Runtime buyer (${lang}) must not redact phone`
+      );
+      assert.ok(
+        runtimeBuyer.includes(`https://wa.me/${phoneItem.clean}`),
+        `Runtime buyer (${lang}) must contain direct link`
+      );
 
       const runtimeSeller = await generateLLMMessage('match_seller', {
         title: 'Year 3 English',
@@ -987,9 +1187,18 @@ test('phone unmasking guarantee: phone numbers are NEVER redacted across any sce
         handoverCode: '5521',
         lang,
       });
-      assert.ok(!runtimeSeller.includes('[PHONE_REDACTED]'), `Runtime seller (${lang}) must not redact phone`);
-      assert.ok(!runtimeSeller.toLowerCase().includes('redacted'), `Runtime seller (${lang}) must not redact phone`);
-      assert.ok(runtimeSeller.includes(`https://wa.me/${phoneItem.clean}`), `Runtime seller (${lang}) must contain direct link`);
+      assert.ok(
+        !runtimeSeller.includes('[PHONE_REDACTED]'),
+        `Runtime seller (${lang}) must not redact phone`
+      );
+      assert.ok(
+        !runtimeSeller.toLowerCase().includes('redacted'),
+        `Runtime seller (${lang}) must not redact phone`
+      );
+      assert.ok(
+        runtimeSeller.includes(`https://wa.me/${phoneItem.clean}`),
+        `Runtime seller (${lang}) must contain direct link`
+      );
     }
   }
 });
@@ -1039,7 +1248,7 @@ test('normalizeTextForMatching: correctly strips accents, lowercases and standar
   assert.strictEqual(normalizeTextForMatching('Élève'), 'eleve');
   assert.strictEqual(normalizeTextForMatching('Mon Activité'), 'mon activite');
   assert.strictEqual(normalizeTextForMatching('Année 6ème'), 'annee 6eme');
-  assert.strictEqual(normalizeTextForMatching("C’est Français !"), "c'est francais");
+  assert.strictEqual(normalizeTextForMatching('C’est Français !'), "c'est francais");
   assert.strictEqual(normalizeTextForMatching('   Livres   en   stock   '), 'livres en stock');
 });
 
@@ -1084,7 +1293,7 @@ test('extractSchoolYear: accurately extracts normalized year format', () => {
   assert.strictEqual(extractSchoolYear('Year9Books', 'Books for Year 9'), 'Year9');
   assert.strictEqual(extractSchoolYear('Year9Biology', 'Year 9 Biology textbook'), 'Year9');
   assert.strictEqual(extractSchoolYear('Year9Year9Year9Books'), 'Year9');
-  assert.strictEqual(extractSchoolYear('', 'Livres pour l\'Année 9'), 'Year9');
+  assert.strictEqual(extractSchoolYear('', "Livres pour l'Année 9"), 'Year9');
   assert.strictEqual(extractSchoolYear('', 'Livres 4ème'), 'Year9');
   assert.strictEqual(extractSchoolYear('Year10Physics', 'Year 10 Physics'), 'Year10');
   assert.strictEqual(extractSchoolYear('GeneralBooks'), null);
@@ -1100,7 +1309,7 @@ test('extractSubject: distinguishes specific curriculum subjects from general gr
   assert.strictEqual(extractSubject('Year9Books', 'looking for year 9 book'), null);
   assert.strictEqual(extractSubject('Year9Books', 'Books for Year 9'), null);
   assert.strictEqual(extractSubject('Year9Year9Year9Books', 'Books for Year 9'), null);
-  assert.strictEqual(extractSubject('Year9Books', 'Livres pour l\'année 9'), null);
+  assert.strictEqual(extractSubject('Year9Books', "Livres pour l'année 9"), null);
   assert.strictEqual(extractSubject('GeneralBooks', 'General Textbooks'), null);
 });
 
@@ -1219,7 +1428,8 @@ test('ensureUnredactedMessage: guarantees no response to parents contains redact
   );
 
   // 2. When no fallback phone is provided, strips redaction tokens cleanly
-  const msgWithVariousRedactions = 'Hello parent [PHONE_REDACTED], email [EMAIL_REDACTED], at [ADDRESS_REDACTED]!';
+  const msgWithVariousRedactions =
+    'Hello parent [PHONE_REDACTED], email [EMAIL_REDACTED], at [ADDRESS_REDACTED]!';
   const cleaned = ensureUnredactedMessage(msgWithVariousRedactions);
   assert.ok(!cleaned.includes('[PHONE_REDACTED]'));
   assert.ok(!cleaned.includes('[EMAIL_REDACTED]'));
@@ -1255,15 +1465,43 @@ test('sandbox session management: activates, verifies, and deactivates developer
 
 test('sandbox phone safeguard: accurately identifies mock vs real community phone numbers', () => {
   // Mock phone numbers (safely intercepted, never dispatched to Meta Graph API)
-  assert.strictEqual(isMockPhoneNumber('+237670000001'), true, 'Parent Marie mock number should be identified');
-  assert.strictEqual(isMockPhoneNumber('+237690000002'), true, 'Parent Paul mock number should be identified');
-  assert.strictEqual(isMockPhoneNumber('+237 670 00 00 15'), true, 'Mock number with formatting should be identified');
-  assert.strictEqual(isMockPhoneNumber('15551234567'), true, 'Meta test format 1555... should be identified');
-  assert.strictEqual(isMockPhoneNumber('+23700009999'), true, 'Cameroon prefix zero format should be identified');
+  assert.strictEqual(
+    isMockPhoneNumber('+237670000001'),
+    true,
+    'Parent Marie mock number should be identified'
+  );
+  assert.strictEqual(
+    isMockPhoneNumber('+237690000002'),
+    true,
+    'Parent Paul mock number should be identified'
+  );
+  assert.strictEqual(
+    isMockPhoneNumber('+237 670 00 00 15'),
+    true,
+    'Mock number with formatting should be identified'
+  );
+  assert.strictEqual(
+    isMockPhoneNumber('15551234567'),
+    true,
+    'Meta test format 1555... should be identified'
+  );
+  assert.strictEqual(
+    isMockPhoneNumber('+23700009999'),
+    true,
+    'Cameroon prefix zero format should be identified'
+  );
 
   // Real community numbers (allowed to receive real Meta dispatches)
-  assert.strictEqual(isMockPhoneNumber('+237677551919'), false, 'Real parent phone must not be flagged as mock');
-  assert.strictEqual(isMockPhoneNumber('+237699887766'), false, 'Real parent phone must not be flagged as mock');
+  assert.strictEqual(
+    isMockPhoneNumber('+237677551919'),
+    false,
+    'Real parent phone must not be flagged as mock'
+  );
+  assert.strictEqual(
+    isMockPhoneNumber('+237699887766'),
+    false,
+    'Real parent phone must not be flagged as mock'
+  );
   assert.strictEqual(isMockPhoneNumber(''), false, 'Empty phone should return false');
 });
 
@@ -1272,8 +1510,16 @@ test('sandbox isolation & 100% data shielding: mock catalog and demands are comp
 
   // Seed rich Cameroon mock curriculum and active exchange
   const seedResult = await seedSandboxData(testerPhone, 'en');
-  assert.strictEqual(seedResult.items, 16, 'Seed should populate 16 books (15 active + 1 reserved hold)');
-  assert.strictEqual(seedResult.demands, 2, 'Seed should populate 2 demands (1 matched hold + 1 open demand)');
+  assert.strictEqual(
+    seedResult.items,
+    16,
+    'Seed should populate 16 books (15 active + 1 reserved hold)'
+  );
+  assert.strictEqual(
+    seedResult.demands,
+    2,
+    'Seed should populate 2 demands (1 matched hold + 1 open demand)'
+  );
 
   // 1. PRODUCTION SCOPE GUARANTEE: Real parents NEVER see simulated records
   const prodInventory = await getScopedActiveInventory(false);
@@ -1302,7 +1548,11 @@ test('sandbox isolation & 100% data shielding: mock catalog and demands are comp
   const sandboxDemands = await getScopedDemandBoard(true);
   assert.strictEqual(sandboxDemands.length, 2, 'Sandbox must see both simulated demands');
   for (const demand of sandboxDemands) {
-    assert.strictEqual(demand.isSimulated, true, 'Every sandbox demand must have isSimulated: true');
+    assert.strictEqual(
+      demand.isSimulated,
+      true,
+      'Every sandbox demand must have isSimulated: true'
+    );
   }
 });
 
@@ -1318,12 +1568,11 @@ test('sandbox activity summary: shows isolated reserved hold with handover code 
     sandboxSummary.includes('Year 10 Modern Chemistry') || sandboxSummary.includes('Year 10'),
     'Sandbox summary should show reserved Year 10 Chemistry'
   );
+  assert.ok(sandboxSummary.includes('7721'), 'Sandbox summary should show handover code 7721');
   assert.ok(
-    sandboxSummary.includes('7721'),
-    'Sandbox summary should show handover code 7721'
-  );
-  assert.ok(
-    sandboxSummary.includes('Parent Marie') || sandboxSummary.includes('+237 670 000 001') || sandboxSummary.includes('237670000001'),
+    sandboxSummary.includes('Parent Marie') ||
+      sandboxSummary.includes('+237 670 000 001') ||
+      sandboxSummary.includes('237670000001'),
     'Sandbox summary should show seller Parent Marie'
   );
 
@@ -1417,6 +1666,3 @@ test('sandbox status helper: accurately reports active status and simulated coun
   assert.strictEqual(status.simulatedInventoryCount, 0);
   assert.strictEqual(status.simulatedDemandCount, 0);
 });
-
-
-

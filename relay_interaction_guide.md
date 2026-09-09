@@ -6,7 +6,7 @@ Welcome to the complete interaction guide for **Relay**, the intelligent WhatsAp
 
 ## 🌟 Quick Reference & Live Endpoints
 
-- **💬 WhatsApp Bot Number:** `+237 6 51 56 53 40` (Display Name: *Educloud,Inc*)
+- **💬 WhatsApp Bot Number:** `+237 6 51 56 53 40` (Display Name: _Educloud,Inc_)
 - **🌐 Web Marketplace Portal:** [https://d3cdc2mtpqk5ut.cloudfront.net](https://d3cdc2mtpqk5ut.cloudfront.net)
 - **🔗 Production Webhook Endpoint:** `https://0bur1ooy7b.execute-api.us-east-1.amazonaws.com/prod/webhook`
 - **🧠 AI Core:** Amazon Bedrock (Nova Lite & Claude) Multi-Intent Parser & Natural Response Generator
@@ -16,9 +16,11 @@ Welcome to the complete interaction guide for **Relay**, the intelligent WhatsAp
 ## 1. 🚀 Onboarding, Greetings & Intelligent Noise Filtering
 
 ### Standard Greetings & Tutorials
+
 When a parent reaches out for the first time or types greeting / tutorial triggers like `hi`, `hello`, `help`, `tutorials`, `how do i use this app`, `bonjour`, or `comment utiliser`.
 
 #### 🇬🇧 English Welcome Message
+
 > **Trigger Examples:** `hi`, `hello`, `help`, `tutorials`, `how do i use this app`
 
 ```text
@@ -32,6 +34,7 @@ Hello! 👋 Welcome to Relay! You can:
 ```
 
 #### 🇫🇷 French Welcome Message
+
 > **Trigger Examples:** `bonjour`, `salut`, `aide`, `tutoriel`, `comment utiliser`
 
 ```text
@@ -45,7 +48,8 @@ Bonjour ! 👋 Bienvenue sur Relay ! Vous pouvez :
 ```
 
 ### 🔇 Intelligent Greeting Noise Filtering in Compound Messages
-When a parent includes social greetings as part of an actionable request (e.g., *"Hello everyone! Please I’m looking for..."*), Relay automatically filters out the greeting noise so it does **not** trigger a generic welcome message. Instead, the bot immediately processes the underlying book offers and requests!
+
+When a parent includes social greetings as part of an actionable request (e.g., _"Hello everyone! Please I’m looking for..."_), Relay automatically filters out the greeting noise so it does **not** trigger a generic welcome message. Instead, the bot immediately processes the underlying book offers and requests!
 
 ---
 
@@ -54,30 +58,35 @@ When a parent includes social greetings as part of an actionable request (e.g., 
 Parents transitioning between school years often want to pass down old textbooks while acquiring new ones for their children in the same message. Relay handles these compound messages seamlessly by executing both transactions sequentially.
 
 ### Example: Simultaneous Request and Offer
+
 > **Parent Sends:**  
-> *"Hello everyone! Please I’m looking for year 6 textbooks and I have year 5"*
+> _"Hello everyone! Please I’m looking for year 6 textbooks and I have year 5"_
 
 #### 🧠 AI Multi-Intent Extraction:
-1. **Greeting Noise Filter:** Strips *"Hello everyone! Please"* to focus on actionable intent.
+
+1. **Greeting Noise Filter:** Strips _"Hello everyone! Please"_ to focus on actionable intent.
 2. **Intent 1 (`demand`):** Year 6 Textbooks (`Year6Books` • Primary School)
 3. **Intent 2 (`offer`):** Year 5 Textbooks (`Year5Books` • Primary School)
 
 #### 💬 Bot Responses Dispatched to Parent:
+
 Relay processes both intents and returns dedicated notifications for each action:
 
 1. **Offer Confirmation / Match:**
+
    ```text
    📚 Hello! We have added an active listing for "Books for Year 5" to the marketplace. 🤝✨
    ```
-   *(If another parent had an open request for Year 5, an immediate match introduction is triggered instead!)*
+
+   _(If another parent had an open request for Year 5, an immediate match introduction is triggered instead!)_
 
 2. **Demand Confirmation / Match:**
    ```text
    👋 We've recorded your request for "Books for Year 6" on our Wishlist / Demand Board 📚.
-   
+
    As soon as another parent lists this book, we will automatically match you and notify you here! 🤝💡
    ```
-   *(If Year 6 books are already in stock, Relay immediately introduces the offering parent!)*
+   _(If Year 6 books are already in stock, Relay immediately introduces the offering parent!)_
 
 ---
 
@@ -86,8 +95,9 @@ Relay processes both intents and returns dedicated notifications for each action
 Parents often list an entire grade's syllabus at once using bullet points or multi-line messages. Relay parses these structured messages and expands them into individual textbook entries.
 
 ### Example: Multi-Grade & Multi-Subject List
+
 > **Parent Sends:**  
-> *"Hi. I have year 10 and 11 books :
+> _"Hi. I have year 10 and 11 books :
 > Chemistry
 > Physics
 > Additional maths
@@ -96,10 +106,12 @@ Parents often list an entire grade's syllabus at once using bullet points or mul
 > ICT
 > Maths
 > Economics
-> Biology"*
+> Biology"_
 
 #### 🧠 AI Extraction & Curriculum Expansion:
+
 Relay recognizes both school years and maps each subject into individual catalog items:
+
 - `Year10Chemistry` & `Year11Chemistry`
 - `Year10Physics` & `Year11Physics`
 - `Year10AdditionalMaths` & `Year11AdditionalMaths`
@@ -119,20 +131,25 @@ Each textbook is registered in the catalog and cross-referenced with open commun
 Parents can offer books using natural phrases, contractions, or textbook photos.
 
 ### Supported Contractions & Phrases:
-- **English:** *"I have..."*, *"I'm offering..."*, *"Im offering..."*, *"Giving away..."*, *"Selling..."*
-- **French:** *"J'ai..."*, *"Je donne..."*, *"Je vends..."*, *"Disponible..."*
+
+- **English:** _"I have..."_, _"I'm offering..."_, _"Im offering..."_, _"Giving away..."_, _"Selling..."_
+- **French:** _"J'ai..."_, _"Je donne..."_, _"Je vends..."_, _"Disponible..."_
 
 ### Example A: Single Book Offer
+
 > **Parent Sends:**  
-> *"J'ai le manuel de Physique Chimie 3ème en très bon état"*
+> _"J'ai le manuel de Physique Chimie 3ème en très bon état"_
 
 #### 💬 Bot Response:
+
 ```text
 📚 Bonjour ! Votre offre pour "Physique Chimie 3ème" a bien été enregistrée dans le catalogue. Dès qu'un parent cherche ce livre, nous vous mettrons en relation ! 🤝✨
 ```
 
 ### Example B: Photo Upload
+
 When a parent uploads a photo of a textbook cover:
+
 1. S3 safely ingests the image with KMS CMK encryption and a 30-day lifecycle policy.
 2. Amazon Bedrock extracts title, grade, subject, and condition.
 3. Relay confirms the listing and attaches the processed photo URL.
@@ -144,23 +161,27 @@ When a parent uploads a photo of a textbook cover:
 When a parent is looking for a textbook for their child.
 
 ### Supported Contractions & Phrases:
-- **English:** *"I'm looking for..."*, *"Im looking for..."*, *"Looking for..."*, *"Need..."*, *"Do you have..."*
-- **French:** *"Je cherche..."*, *"J'ai besoin de..."*, *"Recherche..."*
+
+- **English:** _"I'm looking for..."_, _"Im looking for..."_, _"Looking for..."_, _"Need..."_, _"Do you have..."_
+- **French:** _"Je cherche..."_, _"J'ai besoin de..."_, _"Recherche..."_
 
 ### Scenario 1: Book is already available in the catalog (Instant Match & 48H Hold)
+
 The matchmaking engine finds an active book in DynamoDB and creates a **48-Hour Reserved Hold** with a 4-digit verification code:
 
 **To the searching parent (Buyer):**
+
 ```text
-🎉 Good news! We found a match for "Maths Year 6 Books"! 
+🎉 Good news! We found a match for "Maths Year 6 Books"!
 
 You can connect directly with the parent offering this book via WhatsApp: +237 6XXXXXXXX 🤝📚
 Your Handover Code: #4821 (Valid for 48 hours)
 ```
 
 **To the offering parent (Seller):**
+
 ```text
-🎉 Great news! A parent is looking for your book "Maths Year 6 Books"! 
+🎉 Great news! A parent is looking for your book "Maths Year 6 Books"!
 
 They may reach out to you directly on WhatsApp: +237 6XXXXXXXX 🤝💡
 Your Handover Code: #4821 (Valid for 48 hours)
@@ -169,6 +190,7 @@ Your Handover Code: #4821 (Valid for 48 hours)
 ---
 
 ### Scenario 2: Book is NOT currently in the catalog (Wishlist / Demand Board)
+
 The request is stored in the **Wishlist / Demand Board**:
 
 ```text
@@ -193,23 +215,31 @@ To ensure fairness, books matched between parents are reserved for **48 hours** 
 ```
 
 ### A. Confirming a Successful Handover
+
 Once the exchange is completed, either parent can confirm by texting simple keywords:
+
 > **Triggers:** `Sold`, `Vendu`, `Remis`, `Got it`, `Handover complete`
 
 #### 💬 Bot Response to Seller:
+
 ```text
 Thank you! Your book has been marked as sold and removed from the active catalog. Have a great school year! 🎓
 ```
-*(French: "Merci ! Votre livre a été marqué comme vendu et retiré du catalogue disponible. Bonne rentrée scolaire ! 🎓")*
+
+_(French: "Merci ! Votre livre a été marqué comme vendu et retiré du catalogue disponible. Bonne rentrée scolaire ! 🎓")_
 
 #### 💬 Bot Response to Buyer:
+
 ```text
 Thank you for confirming receipt of the book! Your request has been completed. 🎓
 ```
-*(French: "Merci d'avoir confirmé la réception du livre ! Votre demande a été finalisée. 🎓")*
+
+_(French: "Merci d'avoir confirmé la réception du livre ! Votre demande a été finalisée. 🎓")_
 
 ### B. Automated 15-Minute Hold Sweeper (`holdExpiryCron`)
+
 If 48 hours elapse without confirmation:
+
 - An automated AWS EventBridge CronJob sweeps DynamoDB.
 - The book is safely unlocked and returned to `status: 'active'`.
 - The unmet demand is restored to `status: 'pending'` on the wishlist.
@@ -222,15 +252,17 @@ If 48 hours elapse without confirmation:
 Parents can inspect available inventory and open requests anytime using simple keywords.
 
 ### A. View Active Books Catalog (2-Tier Interactive List Messages)
+
 > **Triggers:** `catalog`, `catalogue`, `available books`, `livres disponibles`
 
 Relay sends a native **WhatsApp Interactive List Message** with a button (`📚 Select Grade` / `📚 Choisir classe`):
 
 1. **Step 1: Select Grade / Year Menu:**
+
    ```text
    📚 Book Catalog (76 books)
    We have 76 books available in our school community! Tap below to choose a grade and browse subjects:
-   
+
    [ 📚 Select Grade ]
    ├── Year 1 (6 books • General Textbooks)
    ├── Year 3 (7 books • Math, Science, English...)
@@ -241,10 +273,11 @@ Relay sends a native **WhatsApp Interactive List Message** with a button (`📚 
 
 2. **Step 2: 1-Tap Subject Selection & Safety Confirmation:**
    Tapping a grade opens the **Subject Interactive List**:
+
    ```text
    📚 Year 5 Books (22)
    Here are available books for Year 5. Tap below to choose:
-   
+
    [ 📖 Select Book ]
    ├── Chemistry (8 avail — Like New)
    ├── Mathematics (1 avail — New)
@@ -256,7 +289,7 @@ Relay sends a native **WhatsApp Interactive List Message** with a button (`📚 
    To prevent accidental taps, Relay sends a 2-button confirmation card:
    ```text
    Would you like to request "Year 5 Chemistry"?
-   
+
    [ ✅ Confirm Request ]   [ ❌ Cancel ]
    ```
    Tapping **Confirm** immediately locks the 48-hour reservation and connects both parents!
@@ -264,6 +297,7 @@ Relay sends a native **WhatsApp Interactive List Message** with a button (`📚 
 ---
 
 ### B. View Requested Books Wishlist
+
 > **Triggers:** `wishlist`, `demand board`, `demandes`, `demandes de livres`
 
 ```text
@@ -287,9 +321,10 @@ Here are textbooks currently requested by the school community. If you have any 
 If a parent asks for or offers a book without specifying the school year, Relay asks for the grade to guarantee precise matchmaking:
 
 > **Parent Sends:**  
-> *"I need a biology textbook"*
+> _"I need a biology textbook"_
 
 #### 💬 Bot Response:
+
 ```text
 📚 Could you please specify the school year or grade for "biology textbook" (e.g. Year 7, Year 10, or 4ème, 2nde)? This helps us match you with the right parent! 😊
 ```

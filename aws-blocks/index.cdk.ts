@@ -65,7 +65,8 @@ blocksStack.handler.addEnvironment('WHATSAPP_SECRET_NAME', whatsappSecret.secret
 // ─── 3. Governance: Amazon Bedrock Guardrails for PII Redaction ──────────────
 export const bedrockGuardrail = new bedrock.CfnGuardrail(blocksStack, 'BedrockPiiGuardrail', {
   name: `${stackName.slice(0, 32)}-pii-guard`,
-  description: 'Redacts and masks PII (phone numbers, addresses, parent names) before foundation model inference',
+  description:
+    'Redacts and masks PII (phone numbers, addresses, parent names) before foundation model inference',
   kmsKeyArn: appKey.keyArn,
   sensitiveInformationPolicyConfig: {
     piiEntitiesConfig: [
@@ -86,18 +87,26 @@ export const bedrockGuardrail = new bedrock.CfnGuardrail(blocksStack, 'BedrockPi
       { type: 'MISCONDUCT', inputStrength: 'HIGH', outputStrength: 'HIGH' },
     ],
   },
-  blockedInputMessaging: 'Sorry, this message contains sensitive or prohibited content and cannot be processed.',
+  blockedInputMessaging:
+    'Sorry, this message contains sensitive or prohibited content and cannot be processed.',
   blockedOutputsMessaging: 'Sorry, this response was filtered by security policy.',
 });
 
-export const bedrockGuardrailVersion = new bedrock.CfnGuardrailVersion(blocksStack, 'BedrockPiiGuardrailVersion', {
-  guardrailIdentifier: bedrockGuardrail.attrGuardrailId,
-  description: 'Version 1 for Bedrock PII Guardrail',
-});
+export const bedrockGuardrailVersion = new bedrock.CfnGuardrailVersion(
+  blocksStack,
+  'BedrockPiiGuardrailVersion',
+  {
+    guardrailIdentifier: bedrockGuardrail.attrGuardrailId,
+    description: 'Version 1 for Bedrock PII Guardrail',
+  }
+);
 bedrockGuardrailVersion.addResourceDependency(bedrockGuardrail);
 
 blocksStack.handler.addEnvironment('BEDROCK_GUARDRAIL_ID', bedrockGuardrail.attrGuardrailId);
-blocksStack.handler.addEnvironment('BEDROCK_GUARDRAIL_VERSION', bedrockGuardrailVersion.attrVersion);
+blocksStack.handler.addEnvironment(
+  'BEDROCK_GUARDRAIL_VERSION',
+  bedrockGuardrailVersion.attrVersion
+);
 
 // ─── 4. Security & Perimeter Defense: AWS WAFv2 WebACL ───────────────────────
 const cleanStackName = stackName.replace(/[^a-zA-Z0-9]/g, '');
@@ -186,10 +195,14 @@ export const apiWaf = new wafv2.CfnWebACL(blocksStack, 'ApiGatewayWAF', {
 // Associate WAF WebACL to API Gateway Deployment Stage (format required by AWS WAFv2: arn:aws:apigateway:region::/restapis/api-id/stages/stage-name)
 const stageArn = `arn:${cdk.Aws.PARTITION}:apigateway:${cdk.Aws.REGION}::/restapis/${blocksStack.gateway.restApiId}/stages/${blocksStack.gateway.deploymentStage.stageName}`;
 
-export const wafAssociation = new wafv2.CfnWebACLAssociation(blocksStack, 'ApiGatewayWAFAssociation', {
-  resourceArn: stageArn,
-  webAclArn: apiWaf.attrArn,
-});
+export const wafAssociation = new wafv2.CfnWebACLAssociation(
+  blocksStack,
+  'ApiGatewayWAFAssociation',
+  {
+    resourceArn: stageArn,
+    webAclArn: apiWaf.attrArn,
+  }
+);
 
 // ─── 5. Observability: Distributed Tracing (X-Ray) & Alarms ──────────────────
 
@@ -202,7 +215,11 @@ if (cfnFunc) {
 // Attach Scoped Least-Privilege IAM Policies (replacing wildcard resources)
 blocksStack.handler.addToRolePolicy(
   new iam.PolicyStatement({
-    actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream', 'bedrock:ApplyGuardrail'],
+    actions: [
+      'bedrock:InvokeModel',
+      'bedrock:InvokeModelWithResponseStream',
+      'bedrock:ApplyGuardrail',
+    ],
     resources: [
       `arn:aws:bedrock:*::foundation-model/*`,
       `arn:aws:bedrock:*:*:inference-profile/*`,
@@ -244,7 +261,8 @@ blocksStack.handler.addToRolePolicy(
 // Alarm 1: Meta/Bedrock 429 Throttling Errors Alarm
 export const throttlingAlarm = new cloudwatch.Alarm(blocksStack, 'MetaBedrockThrottlingAlarm', {
   alarmName: `${stackName}-Throttling-429-Alarm`,
-  alarmDescription: 'Alerts when Meta WhatsApp or Bedrock API calls experience 429 throttling errors',
+  alarmDescription:
+    'Alerts when Meta WhatsApp or Bedrock API calls experience 429 throttling errors',
   metric: new cloudwatch.Metric({
     namespace: 'BooksApp/WhatsAppMarketplace',
     metricName: 'ThrottlingErrors',
@@ -259,21 +277,26 @@ export const throttlingAlarm = new cloudwatch.Alarm(blocksStack, 'MetaBedrockThr
 });
 
 // Alarm 2: Webhook Delivery & Signature Validation Failure Alarm
-export const webhookFailureAlarm = new cloudwatch.Alarm(blocksStack, 'WebhookDeliveryFailureAlarm', {
-  alarmName: `${stackName}-Webhook-Delivery-Failure-Alarm`,
-  alarmDescription: 'Alerts when API Gateway 4xx/5xx errors or HMAC signature validation failures occur',
-  metric: new cloudwatch.Metric({
-    namespace: 'AWS/ApiGateway',
-    metricName: '4XXError',
-    dimensionsMap: { ApiName: blocksStack.gateway.restApiName },
-    statistic: 'Sum',
-    period: Duration.minutes(5),
-  }),
-  threshold: 5,
-  evaluationPeriods: 1,
-  comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-  treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-});
+export const webhookFailureAlarm = new cloudwatch.Alarm(
+  blocksStack,
+  'WebhookDeliveryFailureAlarm',
+  {
+    alarmName: `${stackName}-Webhook-Delivery-Failure-Alarm`,
+    alarmDescription:
+      'Alerts when API Gateway 4xx/5xx errors or HMAC signature validation failures occur',
+    metric: new cloudwatch.Metric({
+      namespace: 'AWS/ApiGateway',
+      metricName: '4XXError',
+      dimensionsMap: { ApiName: blocksStack.gateway.restApiName },
+      statistic: 'Sum',
+      period: Duration.minutes(5),
+    }),
+    threshold: 5,
+    evaluationPeriods: 1,
+    comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }
+);
 
 // Alarm 3: Lambda Execution Errors Alarm
 export const lambdaErrorAlarm = new cloudwatch.Alarm(blocksStack, 'LambdaErrorRateAlarm', {
@@ -290,21 +313,30 @@ export const lambdaErrorAlarm = new cloudwatch.Alarm(blocksStack, 'LambdaErrorRa
 });
 
 // Alarm 4: WAF Blocked Requests Spike Alarm
-export const wafBlockedRequestsAlarm = new cloudwatch.Alarm(blocksStack, 'WafBlockedRequestsAlarm', {
-  alarmName: `${stackName}-WAF-Blocked-Requests-Alarm`,
-  alarmDescription: 'Alerts on spikes in blocked suspicious requests / flood attempts via AWS WAF',
-  metric: new cloudwatch.Metric({
-    namespace: 'AWS/WAFV2',
-    metricName: 'BlockedRequests',
-    dimensionsMap: { WebACL: `${stackName}-waf-acl`, Region: cdk.Stack.of(blocksStack).region, Rule: 'ALL' },
-    statistic: 'Sum',
-    period: Duration.minutes(5),
-  }),
-  threshold: 50,
-  evaluationPeriods: 1,
-  comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-  treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-});
+export const wafBlockedRequestsAlarm = new cloudwatch.Alarm(
+  blocksStack,
+  'WafBlockedRequestsAlarm',
+  {
+    alarmName: `${stackName}-WAF-Blocked-Requests-Alarm`,
+    alarmDescription:
+      'Alerts on spikes in blocked suspicious requests / flood attempts via AWS WAF',
+    metric: new cloudwatch.Metric({
+      namespace: 'AWS/WAFV2',
+      metricName: 'BlockedRequests',
+      dimensionsMap: {
+        WebACL: `${stackName}-waf-acl`,
+        Region: cdk.Stack.of(blocksStack).region,
+        Rule: 'ALL',
+      },
+      statistic: 'Sum',
+      period: Duration.minutes(5),
+    }),
+    threshold: 50,
+    evaluationPeriods: 1,
+    comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+    treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  }
+);
 
 if (sandboxMode) {
   // Make all resources deletable so sandbox:destroy can clean up the entire stack.
