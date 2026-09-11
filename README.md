@@ -25,8 +25,8 @@ Relay is an autonomous AI agent operating quietly in the background on WhatsApp.
 
 To understand why traditional group chats collapse, consider this unfiltered view from our school WhatsApp group. Searching for the word `"Books"` returned **over 53 separate message threads** in a single group — parents posting lists, inquiring about Year 1 through Year 13 textbooks, sharing cover photos, and desperately reposting because their messages scrolled out of sight within minutes:
 
-![School WhatsApp Group Chat Book Chaos](./docs/images/school_chat_book_chaos.png)
-_Figure 1: Real-world screenshots from our school community WhatsApp chat. Searching "Books" surfaces over 53 disjointed message threads across Year 1 through Year 13. Notice the repeated reposts, requests for private messages ("inbox please"), and the total displacement of official school announcements._
+[![School WhatsApp Group Chat Book Chaos](./docs/images/school_chat_book_chaos.png)](./docs/images/school_chat_book_chaos.png)
+_Figure 1: Real-world screenshots from our school community WhatsApp chat (click image to open in full high resolution). Searching "Books" surfaces over 53 disjointed message threads across Year 1 through Year 13. Notice the repeated reposts, requests for private messages ("inbox please"), and the total displacement of official school announcements._
 
 ---
 

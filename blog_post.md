@@ -39,8 +39,8 @@ Bringing a selling parent together with a buying parent had become an exhausting
 
 To understand the sheer magnitude of this breakdown, consider this unfiltered view from inside our school WhatsApp group. Searching for the word `"Books"` returned **over 53 separate message threads** in a single group — parents posting lists, inquiring about Year 1 through Year 13 textbooks, sharing cover photos, and desperately reposting because their messages scrolled out of sight within minutes:
 
-![Real-world school WhatsApp group chat flooded with book requests and sales](./docs/images/school_chat_book_chaos.png)
-_Figure 1: Real-world screenshots from our school community WhatsApp chat. Searching "Books" surfaces dozens of disjointed messages across Year 1 through Year 13. Notice the repeated reposts, requests for contact in private message ("inbox please"), and the total displacement of official school discussions._
+[![Real-world school WhatsApp group chat flooded with book requests and sales](./docs/images/school_chat_book_chaos.png)](./docs/images/school_chat_book_chaos.png)
+_Figure 1: Real-world screenshots from our school community WhatsApp chat (click image to open in full high resolution). Searching "Books" surfaces dozens of disjointed messages across Year 1 through Year 13. Notice the repeated reposts, requests for contact in private message ("inbox please"), and the total displacement of official school discussions._
 
 ---
 

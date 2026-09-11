@@ -1908,13 +1908,13 @@ function renderMatchedDemandsTab() {
                                     style="font-size:0.72rem;padding:4px 8px;background:#059669;"
                                     title="Confirm physical handover and mark book sold"
                                     @click=${async () => {
-                                    await api.confirmHandover({
-                                      itemId: m.matchedItemId || '',
-                                      demandId: m.demandId,
-                                    });
-                                    setBannerMessage('Handover confirmed! Book marked as sold.');
-                                    await loadData();
-                                  }}
+                                      await api.confirmHandover({
+                                        itemId: m.matchedItemId || '',
+                                        demandId: m.demandId,
+                                      });
+                                      setBannerMessage('Handover confirmed! Book marked as sold.');
+                                      await loadData();
+                                    }}
                                   >
                                     Mark Sold
                                   </button>
@@ -1929,15 +1929,15 @@ function renderMatchedDemandsTab() {
                                     style="font-size:0.72rem;padding:4px 8px;"
                                     title="Release expired hold back to active community inventory"
                                     @click=${async () => {
-                                    await api.releaseHold({
-                                      itemId: m.matchedItemId,
-                                      demandId: m.demandId,
-                                    });
-                                    setBannerMessage(
-                                      'Hold released! Book returned to active catalog.'
-                                    );
-                                    await loadData();
-                                  }}
+                                      await api.releaseHold({
+                                        itemId: m.matchedItemId,
+                                        demandId: m.demandId,
+                                      });
+                                      setBannerMessage(
+                                        'Hold released! Book returned to active catalog.'
+                                      );
+                                      await loadData();
+                                    }}
                                   >
                                     🔄 Release Hold
                                   </button>
