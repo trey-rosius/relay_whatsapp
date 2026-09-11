@@ -202,14 +202,40 @@ Because Relay costs less than **$3/month** to run, it can be sustainably finance
 
 ## 7. Real-World Community Impact & Results
 
-Relay was rolled out live to our school community with immediate, transformative results:
+Relay was rolled out live to our school community with immediate, transformative results, moving textbook recycling completely out of chaotic group feeds and into an autonomous, proactive community exchange.
 
-- 🔇 **100% Elimination of Book Spam:** Over five months of chaotic book chatter vanished from the main school group chat.
-- ⏱️ **Instant Matchmaking:** Average time-to-match dropped from 3 weeks of manual reposting to **under 60 seconds**.
-- 💰 **Up to 70% Family Savings:** Hundreds of curriculum textbooks recycled locally.
-- 📱 **Zero Onboarding Friction:** 100% parent adoption with zero apps installed and zero accounts created.
-- 🤝 **Self-Policing Community Adoption:** When occasional newcomers posted a book request in the main chat, other parents immediately redirected them:
-  > _"Don't post books here! Just text Relay at [Phone Number] — it matches you in two seconds and gives you the contact code."_
+### 📊 Production Marketplace Velocity & Live Metrics
+
+The real-time admin portal provides a live pulse of the community's circular textbook economy:
+
+[![Relay Production Marketplace Live Dashboard](./docs/images/relay_community_dashboard.png)](./docs/images/relay_community_dashboard.png)
+_Figure 3: Production Dashboard Live Metrics. Over 100 textbooks cataloged across primary and secondary curricula, 26 pending parent wishlist demands actively tracked, 15 active 48-hour escrow holds, and 47 completed parent-to-parent book sales._
+
+- 📚 **100 Available Textbooks Cataloged:** Indexed across subjects (Math, Biology, Physics, Literature, French, English) and curriculum grades (Grade 1 to Terminale) with condition grades.
+- ⏳ **26 Proactive Wishlists Monitored:** Unfulfilled book requests queued on the demand board, instantly triggering matches the moment a seller posts.
+- 🤝 **15 Active 48-Hour Escrow Holds:** Automated reservations with mutual 4-digit verification pins preventing double-booking while parents arrange school gate handoffs.
+- 🎓 **47 Completed Book Exchanges:** Tangible textbooks recycled within the school, keeping money in families' pockets and books out of waste bins.
+- 🔇 **100% Elimination of Book Spam:** Over five months of repetitive book clutter vanished from the main school broadcast group.
+- ⏱️ **Under 60-Second Match Latency:** Average time-to-match dropped from 3 weeks of manual reposting to under a minute.
+
+### 💬 What Real Parents Are Saying (Bilingual Praise)
+
+Because Relay required zero app downloads, zero account creations, and functioned seamlessly in both French and English directly within WhatsApp, community reception was immediate and overwhelmingly positive:
+
+[![Real Community Parent Praise and Feedback for Relay](./docs/images/relay_parent_feedback.png)](./docs/images/relay_parent_feedback.png)
+_Figure 4: Authentic feedback and testimonials from school community parents in English and French. Highlights praise the automated assistant, the clean catalog access, and how easy it makes exchanges compared to group chat chaos._
+
+- 🇫🇷 _"Bonsoir chers parents. Wow c'est superbe, merci d'avoir pris la peine de la faire. 😎"_ ("Good evening dear parents. Wow this is superb, thank you for taking the trouble to build this!")
+- 🇫🇷 _"Bonjour chers parents très bonne idée j'aurais grand besoin de lui 🙏"_ ("Hello dear parents, very good idea, I will really need this 🙏")
+- 🇬🇧 _"Thanks very much. This makes it quite easy. I will type in what I have there."_
+- 🇬🇧 _"great job! 👍"_
+- 🇫🇷 _"Excellent.... 🙏 👍 3"_
+
+### 🤝 Self-Policing Community Adoption
+
+The true test of a Good Neighbor agent is whether the community defends and advocates for it. When occasional newcomers or returning parents posted a textbook request in the main school chat, other parents immediately stepped in to redirect them:
+
+> _"Don't post books here! Just text Relay at [Phone Number] — it matches you in two seconds and gives you the contact code."_
 
 ---
 

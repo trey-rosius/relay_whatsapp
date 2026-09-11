@@ -66,9 +66,19 @@ When communities try to organize textbook exchanges, they almost always reach fo
 
 In our live school deployment:
 
+[![Relay Production Marketplace Live Dashboard](./docs/images/relay_community_dashboard.png)](./docs/images/relay_community_dashboard.png)
+
+- **Over 100 Textbooks Cataloged & 47 Completed Exchanges:** Active circular economy saving parents up to 70% on curriculum costs with 15 active escrow holds and 26 proactive wishlists.
 - **The Main Group Chat Went Completely Quiet on Book Spam:** Five full months (August–December) of repetitive, chaotic textbook chatter was completely cleared out of the community group chat, restoring it to essential academic notices, teacher alerts, and PTA discussions.
 - **Self-Policing Community Adoption:** When an occasional parent who is new to the school asks for a book in the main group, other parents immediately redirect them: _"Don't post here — just text Relay at this phone number and it will connect you automatically!"_
-- **Real Parent Testimonials:** School parents have overwhelmingly praised how fast, painless, and respectful of their time Relay is compared to years past.
+
+[![Real Community Parent Praise and Feedback for Relay](./docs/images/relay_parent_feedback.png)](./docs/images/relay_parent_feedback.png)
+
+- **Real Parent Testimonials (Bilingual Praise):** School parents have overwhelmingly praised how fast, painless, and respectful of their time Relay is compared to years past:
+  - 🇫🇷 _"Bonsoir chers parents. Wow c'est superbe, merci d'avoir pris la peine de la faire. 😎"_
+  - 🇫🇷 _"Bonjour chers parents très bonne idée j'aurais grand besoin de lui 🙏"_
+  - 🇬🇧 _"Thanks very much. This makes it quite easy. I will type in what I have there."_
+  - 🇬🇧 _"great job! 👍"_
 
 ---
 
