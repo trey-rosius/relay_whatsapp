@@ -118,55 +118,77 @@ With Relay:
 To deliver sub-second conversational latency while upholding enterprise security, strict data isolation, and background reliability, Relay is architected as an event-driven, serverless system on AWS:
 
 [![Relay End-to-End Architecture Topology](./docs/images/relay_architecture.png)](./docs/images/relay_architecture.png)
-_Figure 2: Relay Simplified End-to-End System Architecture (click image to open in full high resolution). Illustrates WhatsApp parent interaction, Security and Boundary Layer (AWS WAF v2, HMAC-SHA256, KMS CMK, PII Redaction), AWS Blocks building blocks, and the autonomous Strands Agents / Amazon Bedrock (Nova Pro & Nova Lite) reasoning loop._
+_Figure 2: Relay Simplified End-to-End System Architecture (click image to open in full high resolution). Illustrates WhatsApp parent interaction, Security and Boundary Layer (AWS WAF v2, HMAC-SHA256, KMS CMK, Dual-Stage PII Redactor), AWS Blocks building blocks, and the autonomous Strands Agents / Amazon Bedrock (Nova Pro & Nova Lite) reasoning loop._
 
 ```
-                                  INBOUND INGRESS
-                                         │
-                 ┌───────────────────────┴───────────────────────┐
-                 ▼                                               ▼
-     [Parent Community WhatsApp]                     [Developer Sandbox Channel]
-     Natural language chat (EN/FR)                   #SANDBOX ON / #SEED / #RESET
-     Textbook cover photo uploads                    100% Isolated Data Simulation
-                 │                                               │
-                 └───────────────────────┬───────────────────────┘
-                                         ▼
-                     Amazon API Gateway (POST /webhook)
-                                         │
-                                         ▼
-             AWS WAF v2 (Rate Limiting & Managed Core Rule Sets)
-                                         │
-                                         ▼
-              Cryptographic HMAC-SHA256 Payload Verification
-                         (crypto.timingSafeEqual)
-                                         │
-                                         ▼
-                     AWS Lambda Durable Execution Engine
-                     withDurableExecution(processWhatsApp)
-                                         │
-        ┌────────────────────────────────┼────────────────────────────────┐
-        ▼                                ▼                                ▼
-[Deterministic Fast-Paths]   [Amazon Bedrock NLP Engine]    [Strands Autonomous Agent]
-• Sub-50ms DynamoDB queries  • 11-Intent Semantic Parsing   • @aws-blocks/bb-agent Loop
-• Catalog, Parent Activity   • Nova Lite & Claude 3.5       • Zod-Validated Tool Suite
-• Handover Verification      • Typo-Tolerant Stem Scoring   • Autonomous Tool Invocations
-        │                                │                                │
-        └────────────────────────────────┼────────────────────────────────┘
-                                         ▼
-                     Curriculum Matchmaking & Escrow Engine
-                     • SUBJECT_CATALOG Normalizer & Translator
-                     • Dual-Track GSI Query (Supply & Demand)
-                     • 48-Hour Atomic Escrow Hold Lock (#XXXX)
-                                         │
-                 ┌───────────────────────┴───────────────────────┐
-                 ▼                                               ▼
-       [Data & Persistence]                            [Outbound Communications]
-       • DynamoDB: active-inventory                    • Meta WhatsApp Cloud API v25.0
-       • DynamoDB: demand-board                        • Mock Recipient Interception
-       • DynamoDB: sandbox-sessions (KVStore)          • 2-Tier Interactive List Drawers
-       • S3: parent-book-images (30d TTL)              • 2-Button Safety Confirmations
-       • EventBridge: 15-Min Hold Sweeper              • CloudWatch EMF & AWS X-Ray
+   Parent on WhatsApp
+   ["Selling Math Year 4"] ──┐
+   ["Need Chemistry Y6"]  ───┴──► [WhatsApp Ingress]
+                                          │
+    ┌─────────────────────────────────────┴─────────────────────────────────────┐
+    │                       SECURITY AND BOUNDARY LAYER                         │
+    │  • AWS WAF v2 Shield (Rate Limiting & IP Reputation Management)          │
+    │  • API Gateway Ingress API (POST /webhook)                               │
+    │  • Cryptographic HMAC SHA256 Verifier (Custom timingSafeEqual block)     │
+    │  • AWS KMS Customer Managed Key (CMK Envelope Encryption)                 │
+    │  • PII REDACTOR: (1) In-Memory Pre-Redactor  (2) Bedrock Guardrails       │
+    │  • API Gateway (Safe-RPC): Type-Safe JSON RPC API ──► Dashboard (S3+CF)   │
+    └─────────────────────────────────────┬─────────────────────────────────────┘
+                                          │
+                                          ▼
+    ┌───────────────────────────────────────────────────────────────────────────┐
+    │                         AWS BLOCKS FOUNDATION                             │
+    │                                                                           │
+    │   [Agent] ──────────────────────────┐                                     │
+    │   [Distributed Table] ──────────────┼──► DynamoDB Active Inventory        │
+    │                                     ├──► DynamoDB Demand Board            │
+    │   [Knowledge Base] ─────────────────┼──► S3 Vectors + Titan Embeddings    │
+    │   [File Bucket] ────────────────────┼──► Amazon S3 Media Bucket           │
+    │   [Cron Job] ───────────────────────┼──► AWS EventBridge (15-min sweeper) │
+    │   [AppSettings] ────────────────────┼──► AWS SSM Parameter Store          │
+    │   [Tracer] & [Metrics] ─────────────┼──► AWS CloudWatch & X-Ray           │
+    │   [Api Namespace] & [Scope]         │                                     │
+    └─────────────────────────────────────┼─────────────────────────────────────┘
+                                          │
+                                          ▼
+    ┌───────────────────────────────────────────────────────────────────────────┐
+    │             AWS BEDROCK AGENTCORE & STRANDS REASONING RUNTIME             │
+    │                                                                           │
+    │       AWS Bedrock AgentCore ──► AWS Strands SDK                           │
+    │                                       │                                   │
+    │                                       ├──► Amazon Nova Pro (Vision/Photo) │
+    │                                       └──► Amazon Nova Lite (Sub-500ms)   │
+    └───────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Architectural Breakdown by Layer
+
+1. **Conversational Ingress Layer (WhatsApp):**
+   - Parents communicate in natural language or send textbook photos directly via WhatsApp.
+   - Handles multi-intent messages simultaneously (e.g., selling _Math Year 4_ while searching for _Chemistry Year 6_).
+
+2. **Security and Boundary Layer:**
+   - **AWS WAF v2 Shield:** Enforces edge rate limiting, anti-DDoS, and IP reputation management.
+   - **Amazon API Gateway:** Exposes the public webhook endpoint (`POST /webhook`).
+   - **Cryptographic HMAC-SHA256 Verifier:** Custom block validates Meta webhooks using constant-time signature verification (`crypto.timingSafeEqual`).
+   - **AWS KMS Customer Managed Key (CMK):** Enforces envelope encryption across all databases, buckets, and cached parameters.
+   - **Dual-Stage PII Redactor:** Masks phone numbers, emails, and street addresses _in-memory_ before prompts reach LLMs, backed by Bedrock Guardrails.
+   - **Safe-RPC API Gateway:** Exposes typed JSON-RPC endpoints consumed by the administrative web dashboard hosted on Amazon CloudFront & S3.
+
+3. **AWS Blocks Infrastructure Foundation:**
+   - **Agent (`@aws-blocks/bb-agent`):** Encapsulates the Strands Agent loop with typed Zod tool definitions.
+   - **Distributed Table (`DistributedTable`):** Backs `active-inventory` and `demand-board` with microsecond Global Secondary Index lookups (`byConcept`).
+   - **Knowledge Base (`KnowledgeBase`):** Provides contextual curriculum semantic retrieval backed by Amazon Titan Multimodal Embeddings.
+   - **File Bucket (`FileBucket`):** Stores uploaded textbook cover photos with automated 30-day lifecycle expiration rules.
+   - **Cron Job (`CronJob`):** Serverless 15-minute scheduled event driving the fair-play 48-hour reservation sweeper.
+   - **AppSettings (`AppSettings`):** Centralizes dynamic configurations in AWS Systems Manager (SSM) Parameter Store.
+   - **Tracer & Metrics:** Streams subsegments to AWS X-Ray and sub-second metrics to CloudWatch via Embedded Metric Format (EMF).
+   - **Api Namespace & Scope:** Enforces tenant isolation, sandbox simulation containment, and clean modular boundary encapsulation.
+
+4. **Strands & Bedrock Agent Core:**
+   - **AWS Bedrock AgentCore:** Coordinates agent lifecycle and managed runtime orchestration.
+   - **AWS Strands SDK:** Powers the autonomous, multi-turn reasoning and tool-calling execution loop.
+   - **Amazon Nova Pro & Nova Lite:** Deploys Nova Pro for deep multimodal textbook cover OCR/parsing and Nova Lite for ultra-fast, sub-500ms conversational intent classification.
 
 ### AWS Building Blocks & Services Catalog
 
