@@ -1038,9 +1038,9 @@ function renderFilterToolbar(showClassFilter = true) {
                       <button
                         class="pill ${filterClass === cls.id ? 'active' : ''}"
                         @click=${() => {
-                        filterClass = cls.id;
-                        redraw();
-                      }}
+                          filterClass = cls.id;
+                          redraw();
+                        }}
                       >
                         ${cls.label}
                       </button>
@@ -1385,10 +1385,10 @@ function renderStorefrontModal() {
                               class="secondary sm"
                               style="margin-top:8px;width:100%;font-size:0.72rem;"
                               @click=${() => {
-                            setBannerMessage(
-                              `💬 WhatsApp Bundle Request sent to seller ${selectedStorefront?.sellerPhone} for all ${b.count} books in ${b.grade}!`
-                            );
-                          }}
+                                setBannerMessage(
+                                  `💬 WhatsApp Bundle Request sent to seller ${selectedStorefront?.sellerPhone} for all ${b.count} books in ${b.grade}!`
+                                );
+                              }}
                             >
                               Request Entire Bundle
                             </button>
@@ -1782,17 +1782,17 @@ function renderMatchedDemandsTab() {
                           <button
                             class="secondary sm"
                             @click=${async () => {
-                            await handleAddWishlistDemand(
-                              'Year8Science',
-                              'Year 8 Science',
-                              'Science',
-                              '+15559990001'
-                            );
-                            await handleSimulateInboundMedia(
-                              'I have Year 8 Science textbook in great shape',
-                              '+15559990002'
-                            );
-                          }}
+                              await handleAddWishlistDemand(
+                                'Year8Science',
+                                'Year 8 Science',
+                                'Science',
+                                '+15559990001'
+                              );
+                              await handleSimulateInboundMedia(
+                                'I have Year 8 Science textbook in great shape',
+                                '+15559990002'
+                              );
+                            }}
                           >
                             ⚡ Run Auto-Match Simulation
                           </button>
@@ -1823,22 +1823,22 @@ function renderMatchedDemandsTab() {
                           <div class="book-concept">Concept: ${m.concept}</div>
                         </div>
                         ${
-                        m.status === 'fulfilled'
-                          ? html`<span
-                              class="badge"
-                              style="background:rgba(16,185,129,0.15);color:#34d399;border:1px solid rgba(16,185,129,0.35);"
-                              >COMPLETED / SOLD 🎓</span
-                            >`
-                          : isExpired
+                          m.status === 'fulfilled'
                             ? html`<span
                                 class="badge"
-                                style="background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.35);"
-                                >HOLD EXPIRED</span
+                                style="background:rgba(16,185,129,0.15);color:#34d399;border:1px solid rgba(16,185,129,0.35);"
+                                >COMPLETED / SOLD 🎓</span
                               >`
-                            : html`<span class="badge badge-matched"
-                                >48H HOLD (${remainingHours}h left)</span
-                              >`
-                      }
+                            : isExpired
+                              ? html`<span
+                                  class="badge"
+                                  style="background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.35);"
+                                  >HOLD EXPIRED</span
+                                >`
+                              : html`<span class="badge badge-matched"
+                                  >48H HOLD (${remainingHours}h left)</span
+                                >`
+                        }
                       </div>
 
                       <div class="tags-row">
@@ -1846,46 +1846,47 @@ function renderMatchedDemandsTab() {
                           ${m.domain || 'Marketplace'}
                         </span>
                         ${
-                        m.handoverCode
-                          ? html`<span
-                              class="badge"
-                              style="background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3);"
-                              >Code: #${m.handoverCode}</span
-                            >`
-                          : ''
-                      }
+                          m.handoverCode
+                            ? html`<span
+                                class="badge"
+                                style="background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3);"
+                                >Code: #${m.handoverCode}</span
+                              >`
+                            : ''
+                        }
                       </div>
 
                       <div
                         style="background:${
-                        m.status === 'fulfilled'
-                          ? 'rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);color:#6ee7b7;'
-                          : isExpired
-                            ? 'rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);color:#fca5a5;'
-                            : 'rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);color:#a5b4fc;'
-                      };padding:10px 12px;border-radius:8px;font-size:0.83rem;"
+                          m.status === 'fulfilled'
+                            ? 'rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);color:#6ee7b7;'
+                            : isExpired
+                              ? 'rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);color:#fca5a5;'
+                              : 'rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);color:#a5b4fc;'
+                        };padding:10px 12px;border-radius:8px;font-size:0.83rem;"
                       >
                         ${
-                        m.status === 'fulfilled'
-                          ? html`
-                              <div>
-                                ✅ <strong>Handover verified & completed!</strong> Book marked as
-                                sold and removed from active catalog.
-                              </div>
-                              <div
-                                style="margin-top:6px;display:flex;flex-direction:column;gap:3px;font-size:0.8rem;color:var(--text-muted);"
-                              >
-                                ${matchedBook?.sellerPhone ? html`<div>Seller: <strong style="color:var(--text);">${matchedBook.sellerPhone}</strong> ${matchedBook.title ? `(${matchedBook.title})` : ''}</div>` : ''}
+                          m.status === 'fulfilled'
+                            ? html`
                                 <div>
-                                  Buyer: <strong style="color:var(--text);">${m.userPhone}</strong>
+                                  ✅ <strong>Handover verified & completed!</strong> Book marked as
+                                  sold and removed from active catalog.
                                 </div>
-                                ${matchedBook?.soldAt || m.matchedAt ? html`<div>Completed: <strong>${formatExactDate(matchedBook?.soldAt || m.matchedAt!)}</strong></div>` : ''}
-                              </div>
-                            `
-                          : isExpired
-                            ? '⚠️ 48-Hour hold has elapsed without physical exchange. Book can be returned to community circulation.'
-                            : `⏳ 48-Hour Reservation Active (${remainingHours}h remaining). Matched parents introduced via WhatsApp.`
-                      }
+                                <div
+                                  style="margin-top:6px;display:flex;flex-direction:column;gap:3px;font-size:0.8rem;color:var(--text-muted);"
+                                >
+                                  ${matchedBook?.sellerPhone ? html`<div>Seller: <strong style="color:var(--text);">${matchedBook.sellerPhone}</strong> ${matchedBook.title ? `(${matchedBook.title})` : ''}</div>` : ''}
+                                  <div>
+                                    Buyer:
+                                    <strong style="color:var(--text);">${m.userPhone}</strong>
+                                  </div>
+                                  ${matchedBook?.soldAt || m.matchedAt ? html`<div>Completed: <strong>${formatExactDate(matchedBook?.soldAt || m.matchedAt!)}</strong></div>` : ''}
+                                </div>
+                              `
+                            : isExpired
+                              ? '⚠️ 48-Hour hold has elapsed without physical exchange. Book can be returned to community circulation.'
+                              : `⏳ 48-Hour Reservation Active (${remainingHours}h remaining). Matched parents introduced via WhatsApp.`
+                        }
                       </div>
 
                       <div class="card-footer">
@@ -1900,13 +1901,13 @@ function renderMatchedDemandsTab() {
                         </div>
                         <div style="display:flex;gap:6px;">
                           ${
-                          m.status !== 'fulfilled'
-                            ? html`
-                                <button
-                                  class="sm"
-                                  style="font-size:0.72rem;padding:4px 8px;background:#059669;"
-                                  title="Confirm physical handover and mark book sold"
-                                  @click=${async () => {
+                            m.status !== 'fulfilled'
+                              ? html`
+                                  <button
+                                    class="sm"
+                                    style="font-size:0.72rem;padding:4px 8px;background:#059669;"
+                                    title="Confirm physical handover and mark book sold"
+                                    @click=${async () => {
                                     await api.confirmHandover({
                                       itemId: m.matchedItemId || '',
                                       demandId: m.demandId,
@@ -1914,20 +1915,20 @@ function renderMatchedDemandsTab() {
                                     setBannerMessage('Handover confirmed! Book marked as sold.');
                                     await loadData();
                                   }}
-                                >
-                                  Mark Sold
-                                </button>
-                              `
-                            : ''
-                        }
+                                  >
+                                    Mark Sold
+                                  </button>
+                                `
+                              : ''
+                          }
                           ${
-                          isExpired
-                            ? html`
-                                <button
-                                  class="secondary sm"
-                                  style="font-size:0.72rem;padding:4px 8px;"
-                                  title="Release expired hold back to active community inventory"
-                                  @click=${async () => {
+                            isExpired
+                              ? html`
+                                  <button
+                                    class="secondary sm"
+                                    style="font-size:0.72rem;padding:4px 8px;"
+                                    title="Release expired hold back to active community inventory"
+                                    @click=${async () => {
                                     await api.releaseHold({
                                       itemId: m.matchedItemId,
                                       demandId: m.demandId,
@@ -1937,12 +1938,12 @@ function renderMatchedDemandsTab() {
                                     );
                                     await loadData();
                                   }}
-                                >
-                                  🔄 Release Hold
-                                </button>
-                              `
-                            : ''
-                        }
+                                  >
+                                    🔄 Release Hold
+                                  </button>
+                                `
+                              : ''
+                          }
                           <button
                             class="danger sm"
                             style="font-size:0.72rem;padding:4px 8px;"
