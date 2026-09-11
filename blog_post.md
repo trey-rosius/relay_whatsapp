@@ -1,4 +1,4 @@
-# Agents for Humans: How We Built Relay — An Autonomous WhatsApp School Book Matchmaker with Strands Agents SDK & AWS Durable Lambda
+# How We Built Relay: An Autonomous WhatsApp School Book Matchmaker
 
 > **Track:** Good Neighbor Agents / Everyday Agents  
 > **Built for:** [AWS Agents for Humans Hackathon](https://agentsforhumans.devpost.com/)  
