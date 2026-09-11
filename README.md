@@ -120,6 +120,9 @@ Solves WhatsApp's strict 10-row list constraint:
 
 ## 🏗️ Architecture Overview
 
+[![Relay System Architecture](./docs/images/relay_architecture.png)](./docs/images/relay_architecture.png)
+_Figure 2: Relay Simplified End-to-End Architecture (click image to open in full high resolution). Illustrates WhatsApp parent interaction, Security and Boundary Layer (AWS WAF v2, HMAC-SHA256, KMS CMK, PII Redaction), AWS Blocks building blocks, and the autonomous Strands Agents / Amazon Bedrock (Nova Pro & Nova Lite) reasoning loop._
+
 ```
                          Parent / Developer WhatsApp Message
                                          │

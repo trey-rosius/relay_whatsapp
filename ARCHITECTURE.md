@@ -24,6 +24,9 @@ Relay is an autonomous AI agent engineered to eliminate the high friction, time 
 
 ## 2. High-Level Architecture Diagram
 
+[![Relay Architecture Diagram](./docs/images/relay_architecture.png)](./docs/images/relay_architecture.png)
+_Figure: Relay Simplified End-to-End System Architecture (click image to open in full high resolution)._
+
 ```mermaid
 flowchart TD
     subgraph Layer1["1. Ingress & Clients"]
