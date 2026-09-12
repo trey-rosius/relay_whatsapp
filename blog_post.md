@@ -1,4 +1,4 @@
-# How We Built Relay: An Autonomous WhatsApp School Book Matchmaker
+# Agents for Humans: How We Built Relay, an Autonomous WhatsApp Book Matchmaker
 
 > **Track:** Good Neighbor Agents / Everyday Agents  
 > **Built for:** [AWS Agents for Humans Hackathon](https://agentsforhumans.devpost.com/)  
