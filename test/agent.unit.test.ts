@@ -7,6 +7,7 @@ import {
   buildInteractiveOtherGradesPayload,
   buildInteractiveYearSubjectsPayload,
   buildParentActivitySummary,
+  parseParentMessageIntentsWithLLM,
   api,
 } from '../aws-blocks/index.js';
 
@@ -263,3 +264,70 @@ test('parent activity: buildParentActivitySummary and api.getParentActivity accu
     ]);
   }
 });
+
+test('semantic equivalence: "livres des year 3" and "year 3 books" yield identical catalog browsing intent', async () => {
+  // Test French query "livres des year 3"
+  const frIntents = await parseParentMessageIntentsWithLLM('livres des year 3');
+  assert.strictEqual(frIntents.length, 1);
+  assert.strictEqual(frIntents[0].intent, 'catalog');
+  assert.strictEqual(frIntents[0].concept, 'Year3Books');
+  assert.strictEqual(frIntents[0].lang, 'fr');
+  assert.strictEqual(frIntents[0].title, 'Livres Année 3');
+
+  // Test English query "year 3 books"
+  const enIntents = await parseParentMessageIntentsWithLLM('year 3 books');
+  assert.strictEqual(enIntents.length, 1);
+  assert.strictEqual(enIntents[0].intent, 'catalog');
+  assert.strictEqual(enIntents[0].concept, 'Year3Books');
+  assert.strictEqual(enIntents[0].lang, 'en');
+  assert.strictEqual(enIntents[0].title, 'Books for Year 3');
+
+  // Test French natural grammar variations (noun-first)
+  const frVariations = ['livres de year 3', 'livres de l\'année 3', 'livres année 3'];
+  for (const query of frVariations) {
+    const res = await parseParentMessageIntentsWithLLM(query);
+    assert.strictEqual(res[0].intent, 'catalog', `Query "${query}" must yield catalog intent`);
+    assert.strictEqual(res[0].concept, 'Year3Books');
+    assert.strictEqual(res[0].lang, 'fr');
+  }
+
+  // Test English natural variations
+  const enVariations = ['books for year 3', 'Year 3'];
+  for (const query of enVariations) {
+    const res = await parseParentMessageIntentsWithLLM(query);
+    assert.strictEqual(res[0].intent, 'catalog', `Query "${query}" must yield catalog intent`);
+    assert.strictEqual(res[0].concept, 'Year3Books');
+    assert.strictEqual(res[0].lang, 'en');
+  }
+
+  // Verify interactive catalog payload generation in both languages
+  const mockInventory = [
+    { title: 'Books for Year 3 Mathematics', conditionType: 'Good' },
+    { title: 'Books for Year 3 Science', conditionType: 'LikeNew' },
+  ];
+
+  const payloadFr = buildInteractiveYearSubjectsPayload('Année 3', mockInventory, 'fr');
+  assert.ok(payloadFr.header?.text.includes('Année 3'));
+  assert.ok(payloadFr.action.button.includes('Choisir un livre'));
+
+  const payloadEn = buildInteractiveYearSubjectsPayload('Year 3', mockInventory, 'en');
+  assert.ok(payloadEn.header?.text.includes('Year 3'));
+  assert.ok(payloadEn.action.button.includes('Select Book'));
+});
+
+test('semantic discrimination: active transaction verbs distinguish demand and offer from catalog browsing', async () => {
+  // Seeking / Demand with explicit verb
+  const demandRes = await parseParentMessageIntentsWithLLM('Je cherche livres des year 3');
+  assert.ok(
+    demandRes[0].intent === 'demand' || demandRes[0].intent === 'demand_inquiry',
+    `Should detect demand intent for "Je cherche...", got: ${demandRes[0].intent}`
+  );
+
+  // Supplying / Offer with explicit verb
+  const offerRes = await parseParentMessageIntentsWithLLM("J'ai des livres de year 3");
+  assert.ok(
+    offerRes[0].intent === 'offer' || offerRes[0].intent === 'offer_inquiry',
+    `Should detect offer intent for "J'ai...", got: ${offerRes[0].intent}`
+  );
+});
+

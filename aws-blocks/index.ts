@@ -2851,12 +2851,12 @@ Analyze the user's message semantically. Understand typos, slang, informal langu
 
 Categories of intent:
 1. "greeting": Chit-chat, greetings ("hi", "hello", "bonjour", "salut"), tutorials, or help requests ("how do i use this app", "how to use", "tutorials", "tutoriel", "help", "guide").
-2. "catalog": Asking to see available books in stock ("catalog", "catalogue", "what books are available").
+2. "catalog": Asking to see available books in stock, or naming/inquiring about a grade, level, or books for a grade/level to browse without active transaction verbs (e.g., "catalog", "catalogue", "what books are available", "year 3 books", "livres des year 3", "livres de l'année 3", "livres année 3", "manuels 6ème", "books for year 8", "grade 5", "Year 3", "Année 3").
 3. "demand_board": Asking to see what books other parents need ("demand board", "wishlist", "demandes").
 4. "offer_inquiry": The parent states that they want to offer, give away, sell, or donate books, or asks how to offer books, but has NOT yet listed specific titles (e.g., "I'm offering", "ofering", "offereing", "I have books to give", "j'offre des livres", "want to donate books", "selling books", "i have books").
-5. "demand_inquiry": The parent states that they need or are looking for books generally without specifying which book or grade (e.g., "looking for books", "i need books", "je cherche des livres", "need textbooks", "where can i find books").
-6. "offer": The parent is offering/listing one or more specific books or subjects (e.g., "I have Year 6 Maths", "Selling Year 10 Physics", "J'ai un livre de chimie 3ème", "I have chemistry").
-7. "demand": The parent is looking for/requesting one or more specific books or subjects (e.g., "Looking for Year 6 Maths", "Need Year 10 Physics", "Je cherche livre de chimie 3ème", "Looking for chemistry").
+5. "demand_inquiry": The parent states that they need or are looking for books generally without specifying which book or grade (e.g., "looking for books", "i need books", "je cherche des livres", "need textbooks", "where can i find books"). MUST have an explicit seeking verb like "looking for", "need", "je cherche", "besoin". Merely naming a grade like "year 3 books" or "livres des year 3" is "catalog".
+6. "offer": The parent is offering/listing one or more specific books or subjects using supply verbs (e.g., "I have Year 6 Maths", "Selling Year 10 Physics", "J'ai un livre de chimie 3ème", "I have chemistry", "Je vends maths 5ème").
+7. "demand": The parent is looking for/requesting one or more specific books or subjects using explicit seeking/requesting verbs (e.g., "Looking for Year 6 Maths", "Need Year 10 Physics", "Je cherche livre de chimie 3ème", "Looking for chemistry", "Je voudrais le livre de physique 4ème").
 8. "confirm_handover": The parent is confirming that a book was sold, handed over, donated, or delivered to another parent, or that the exchange is complete (e.g., "sold", "vendu", "handed over", "remis au parent", "I gave the book", "got the books", "exchange done", "c'est fait", "livre remis").
 9. "parent_activity": The parent wants to see or check the status of their personal listings, sales, reserved holds, active requests, or account history (e.g., "my books", "mes livres", "my activity", "mon activité", "what did i list", "my listings", "mes annonces", "ce que j'ai mis", "my account", "mes demandes", "what did i post").
 10. "contact_inquiry": The parent is asking for the contact information, phone number, or identity of the parent they matched with for a book exchange (e.g., "which parent", "who has the book", "give me his number", "quel parent", "donne son numéro", "qui a le livre", "contact du vendeur", "what is their phone number").
@@ -2955,19 +2955,26 @@ export async function parseParentMessageIntentsWithLLM(
       ];
     }
 
-    // Fast-path for pure year catalog selection (e.g. "Year 5", "Année 5", "Year 5 books", or list reply forwarded as text)
-    const isYearOnlySelection =
-      /^(?:year|ann[ée]e|grade)\s*(\d{1,2})(?:\s*(?:books?|livres?|textbooks?|catalog|catalogue))?(?:\s*\n.*)?$/i.test(
-        trimmed
-      ) &&
-      !/(?:chemistry|chimie|math|physic|biolog|english|anglais|science|comput|geograph|histor|french|fran[çc]ais|global|social|looking|need|have|j'ai|je cherche|vends|selling|vendu)/i.test(
+    // Fast-path for pure year catalog selection in English and French:
+    // English: "Year 5", "Year 5 books", "Books for Year 5", "Grade 5"
+    // French: "Année 5", "Année 5 livres", "Livres année 5", "Livres de l'année 5", "Livres des year 5", "Manuels 5ème"
+    const yearOnlyMatch =
+      trimmed.match(
+        /^(?:year|ann[ée]e|grade|classe)\s*(\d{1,2})(?:\s*(?:books?|livres?|manuels?|textbooks?|catalog|catalogue))?(?:\s*\n.*)?$/i
+      ) ||
+      trimmed.match(/^(?:books?|textbooks?)\s+(?:for|of)\s+(?:the\s+)?(?:year|grade)\s*(\d{1,2})$/i) ||
+      trimmed.match(
+        /^(?:livres?|manuels?)\s+(?:d['’]|de\s+l['’]|des?\s+|pour\s+l['’]|pour\s+)?(?:l['’])?(?:année|year|classe|grade)?\s*(\d{1,2})(?:\s*(?:books?|livres?|manuels?))?$/i
+      );
+
+    const hasNoVerbOrSubject =
+      !/(?:chemistry|chimie|math|physic|biolog|english|anglais|science|comput|geograph|histor|french|fran[çc]ais|global|social|looking|need|have|j'ai|je cherche|cherche|vends|selling|vendu|donne)/i.test(
         trimmed
       );
 
-    if (isYearOnlySelection) {
-      const yearMatch = trimmed.match(/^(?:year|ann[ée]e|grade)\s*(\d{1,2})/i);
-      const yearNum = yearMatch ? yearMatch[1] : '1';
-      const isFr = /\b(?:ann[ée]e|livres?)\b/i.test(trimmed);
+    if (yearOnlyMatch && hasNoVerbOrSubject) {
+      const yearNum = yearOnlyMatch[1];
+      const isFr = /\b(?:ann[ée]e|livres?|manuels?|des?|pour|classe)\b/i.test(trimmed);
       return [
         {
           intent: 'catalog',
@@ -2975,7 +2982,7 @@ export async function parseParentMessageIntentsWithLLM(
           concept: `Year${yearNum}Books`,
           title: isFr ? `Livres Année ${yearNum}` : `Books for Year ${yearNum}`,
           domain: 'Science',
-          providerCategory: 'HighSchool',
+          providerCategory: 'PrimarySchool',
           conditionType: 'Good',
           description: text,
         },
@@ -3335,7 +3342,8 @@ export function normalizeConceptKey(rawConcept: unknown, fallbackText: string = 
   const num = yearMatch ? yearMatch[1] : '';
   const prefix = num ? `Year${num}` : 'General';
 
-  const textToCheck = clean.length > (num ? `Year${num}`.length : 0) ? clean : fallbackStr;
+  const strippedClean = clean.replace(/^(?:Year|Année|Grade)\d{1,2}/i, '');
+  const textToCheck = strippedClean.length > 0 ? strippedClean : fallbackStr;
   const canonicalSubject = cleanSubjectName(textToCheck, 'en').replace(/[^a-zA-Z0-9]/g, '');
 
   if (canonicalSubject && canonicalSubject !== 'GeneralTextbooks') {
@@ -3485,7 +3493,7 @@ export const SUBJECT_CATALOG: readonly SubjectDefinition[] = [
     fr: 'Sciences',
   },
   {
-    patterns: [/\bgeneral\b/i, /\bg[ée]n[ée]ral\b/i, /\btextbooks?\b/i, /\bmanuels?\b/i],
+    patterns: [/\bgeneral\b/i, /\bg[ée]n[ée]ra(?:l|ux)\b/i, /\btextbooks?\b/i, /\bmanuels?\b/i],
     en: 'General Textbooks',
     fr: 'Livres généraux',
   },
@@ -3726,8 +3734,7 @@ export function extractDemandYearGroup(
 
   // 1. Explicit Year/Année/Grade/Classe + number (e.g. "Year 5", "Année 5", "Grade 5", "Year5")
   const yearMatch =
-    combined.match(/(?:Year|Année|Grade|Classe(?:\s+de)?)\s*(\d{1,2})\b/i) ||
-    combined.match(/\bYear(\d{1,2})\b/i);
+    combined.match(/(?:Year|Année|Grade|Classe(?:\s+de)?)\s*(\d{1,2})/i);
   if (yearMatch) {
     const num = parseInt(yearMatch[1], 10);
     return {
@@ -3738,7 +3745,7 @@ export function extractDemandYearGroup(
   }
 
   // 2. Class <N> (Cameroon Primary, e.g. "Class 6")
-  const classMatch = combined.match(/\bClass\s*(\d{1,2})\b/i);
+  const classMatch = combined.match(/\bClass\s*(\d{1,2})/i);
   if (classMatch) {
     const num = parseInt(classMatch[1], 10);
     return {
@@ -3749,49 +3756,49 @@ export function extractDemandYearGroup(
   }
 
   // 3. French secondary curriculum levels (Collège & Lycée)
-  if (/\b(?:6[èe]me|6eme)\b/i.test(combined)) {
+  if (/\b(?:6[èe]me|6eme)(?=[A-Z]|\b|\d)/i.test(combined)) {
     return {
       yearKey: '6eme',
       sortOrder: 7,
       displayLabel: lang === 'fr' ? '6ème' : '6ème (Year 7)',
     };
   }
-  if (/\b(?:5[èe]me|5eme)\b/i.test(combined)) {
+  if (/\b(?:5[èe]me|5eme)(?=[A-Z]|\b|\d)/i.test(combined)) {
     return {
       yearKey: '5eme',
       sortOrder: 8,
       displayLabel: lang === 'fr' ? '5ème' : '5ème (Year 8)',
     };
   }
-  if (/\b(?:4[èe]me|4eme)\b/i.test(combined)) {
+  if (/\b(?:4[èe]me|4eme)(?=[A-Z]|\b|\d)/i.test(combined)) {
     return {
       yearKey: '4eme',
       sortOrder: 9,
       displayLabel: lang === 'fr' ? '4ème' : '4ème (Year 9)',
     };
   }
-  if (/\b(?:3[èe]me|3eme)\b/i.test(combined)) {
+  if (/\b(?:3[èe]me|3eme)(?=[A-Z]|\b|\d)/i.test(combined)) {
     return {
       yearKey: '3eme',
       sortOrder: 10,
       displayLabel: lang === 'fr' ? '3ème' : '3ème (Year 10)',
     };
   }
-  if (/\b(?:2nde|seconde)\b/i.test(combined)) {
+  if (/\b(?:2nde|seconde)(?=[A-Z]|\b|\d)/i.test(combined)) {
     return {
       yearKey: '2nde',
       sortOrder: 11,
       displayLabel: lang === 'fr' ? '2nde' : '2nde (Year 11)',
     };
   }
-  if (/\b(?:1[èe]re|premi[èe]re)\b/i.test(combined)) {
+  if (/\b(?:1[èe]re|premi[èe]re)(?=[A-Z]|\b|\d)/i.test(combined)) {
     return {
       yearKey: '1ere',
       sortOrder: 12,
       displayLabel: lang === 'fr' ? 'Première' : 'Première (Year 12)',
     };
   }
-  if (/\bterminale\b/i.test(combined)) {
+  if (/\bterminale(?=[A-Z]|\b|\d)/i.test(combined)) {
     return {
       yearKey: 'Terminale',
       sortOrder: 13,
