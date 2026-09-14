@@ -108,7 +108,7 @@ test('prompt snapshots: Response Generation Prompt matches approved baseline acr
     listing_active_en: {
       lang: 'en',
       params: { title: 'Year 8 Chemistry Textbook' },
-      expected: `You are an AI assistant for a parent school book marketplace bot on WhatsApp.
+      expected: `You are Relay, an AI assistant for a parent school book marketplace and exchange community on WhatsApp.
 Generate a concise, friendly WhatsApp message for the following scenario:
 
 Scenario: listing_active
@@ -116,6 +116,7 @@ Target Language: English
 Context Data: {"title":"Year 8 Chemistry Textbook"}
 
 Guidelines:
+- Your name is Relay. If you include a signoff or closing, sign off as "Relay" (or "L'équipe Relay" in French). NEVER write placeholders or bracketed names like "[Your Bot's Name]", "[Bot Name]", or "[Your Name]".
 - Include relevant emojis (📚, 👋, 🤝, 💡).
 - Keep it clear, polite, and direct for parents.
 - If scenario is "listing_active", acknowledge that the parent has listed their book in the school catalog, thank them for sharing with the school community, and explain that we will notify them automatically as soon as another parent requests it.
@@ -126,7 +127,7 @@ Guidelines:
     match_buyer_en: {
       lang: 'en',
       params: { title: 'Year 10 Physics', phone: '+XXXXXXXX1234 (redacted)' },
-      expected: `You are an AI assistant for a parent school book marketplace bot on WhatsApp.
+      expected: `You are Relay, an AI assistant for a parent school book marketplace and exchange community on WhatsApp.
 Generate a concise, friendly WhatsApp message for the following scenario:
 
 Scenario: match_buyer
@@ -134,6 +135,7 @@ Target Language: English
 Context Data: {"title":"Year 10 Physics","phone":"+XXXXXXXX1234 (redacted)"}
 
 Guidelines:
+- Your name is Relay. If you include a signoff or closing, sign off as "Relay" (or "L'équipe Relay" in French). NEVER write placeholders or bracketed names like "[Your Bot's Name]", "[Bot Name]", or "[Your Name]".
 - Include relevant emojis (📚, 👋, 🤝, 💡).
 - Keep it clear, polite, and direct for parents.
 - If scenario is "listing_active", acknowledge that the parent has listed their book in the school catalog, thank them for sharing with the school community, and explain that we will notify them automatically as soon as another parent requests it.
@@ -144,7 +146,7 @@ Guidelines:
     match_seller_fr: {
       lang: 'fr',
       params: { title: 'Manuel de Physique 3ème', phone: '+XXXXXXXX5678 (redacted)' },
-      expected: `You are an AI assistant for a parent school book marketplace bot on WhatsApp.
+      expected: `You are Relay, an AI assistant for a parent school book marketplace and exchange community on WhatsApp.
 Generate a concise, friendly WhatsApp message for the following scenario:
 
 Scenario: match_seller
@@ -152,6 +154,7 @@ Target Language: French
 Context Data: {"title":"Manuel de Physique 3ème","phone":"+XXXXXXXX5678 (redacted)"}
 
 Guidelines:
+- Your name is Relay. If you include a signoff or closing, sign off as "Relay" (or "L'équipe Relay" in French). NEVER write placeholders or bracketed names like "[Your Bot's Name]", "[Bot Name]", or "[Your Name]".
 - Include relevant emojis (📚, 👋, 🤝, 💡).
 - Keep it clear, polite, and direct for parents.
 - If scenario is "listing_active", acknowledge that the parent has listed their book in the school catalog, thank them for sharing with the school community, and explain that we will notify them automatically as soon as another parent requests it.
@@ -162,7 +165,7 @@ Guidelines:
     year_clarification_en: {
       lang: 'en',
       params: { title: 'Biology Textbook' },
-      expected: `You are an AI assistant for a parent school book marketplace bot on WhatsApp.
+      expected: `You are Relay, an AI assistant for a parent school book marketplace and exchange community on WhatsApp.
 Generate a concise, friendly WhatsApp message for the following scenario:
 
 Scenario: year_clarification
@@ -170,6 +173,7 @@ Target Language: English
 Context Data: {"title":"Biology Textbook"}
 
 Guidelines:
+- Your name is Relay. If you include a signoff or closing, sign off as "Relay" (or "L'équipe Relay" in French). NEVER write placeholders or bracketed names like "[Your Bot's Name]", "[Bot Name]", or "[Your Name]".
 - Include relevant emojis (📚, 👋, 🤝, 💡).
 - Keep it clear, polite, and direct for parents.
 - If scenario is "listing_active", acknowledge that the parent has listed their book in the school catalog, thank them for sharing with the school community, and explain that we will notify them automatically as soon as another parent requests it.
@@ -180,7 +184,7 @@ Guidelines:
     catalog_empty_fr: {
       lang: 'fr',
       params: {},
-      expected: `You are an AI assistant for a parent school book marketplace bot on WhatsApp.
+      expected: `You are Relay, an AI assistant for a parent school book marketplace and exchange community on WhatsApp.
 Generate a concise, friendly WhatsApp message for the following scenario:
 
 Scenario: catalog_empty
@@ -188,6 +192,7 @@ Target Language: French
 Context Data: {}
 
 Guidelines:
+- Your name is Relay. If you include a signoff or closing, sign off as "Relay" (or "L'équipe Relay" in French). NEVER write placeholders or bracketed names like "[Your Bot's Name]", "[Bot Name]", or "[Your Name]".
 - Include relevant emojis (📚, 👋, 🤝, 💡).
 - Keep it clear, polite, and direct for parents.
 - If scenario is "listing_active", acknowledge that the parent has listed their book in the school catalog, thank them for sharing with the school community, and explain that we will notify them automatically as soon as another parent requests it.
@@ -1496,6 +1501,19 @@ test('ensureUnredactedMessage: guarantees no response to parents contains redact
   // 3. Clean messages are unaltered
   const normalMsg = '📚 Books for Year 9 are available. Message the seller via WhatsApp!';
   assert.strictEqual(ensureUnredactedMessage(normalMsg), normalMsg);
+
+  // 4. Bracketed bot placeholders are replaced with Relay
+  const msgWithBotPlaceholder = 'We will notify you automatically. Best,\n[Your Bot\'s Name] 💡';
+  assert.strictEqual(
+    ensureUnredactedMessage(msgWithBotPlaceholder),
+    'We will notify you automatically. Best,\nRelay 💡'
+  );
+
+  const msgWithOtherPlaceholder = 'Merci pour votre aide ! [Nom du bot]';
+  assert.strictEqual(
+    ensureUnredactedMessage(msgWithOtherPlaceholder),
+    'Merci pour votre aide ! Relay'
+  );
 });
 
 // ─── 15. Developer In-Chat Sandbox Mode (Option 1 Tests) ─────────────────────

@@ -233,6 +233,8 @@ export function ensureUnredactedMessage(text: string, fallbackPhone?: string): s
       .replace(/\+?X+\d*\s*\(masqu[ée]\)/gi, fallbackPhone);
   }
   return clean
+    .replace(/\[\s*(?:Your\s+)?(?:Bot(?:'s)?\s+Name|Name)\s*\]/gi, 'Relay')
+    .replace(/\[\s*(?:Nom\s+du\s+bot|Votre\s+nom)\s*\]/gi, 'Relay')
     .replace(/\[PHONE_REDACTED\]/gi, '')
     .replace(/\[EMAIL_REDACTED\]/gi, '')
     .replace(/\[ADDRESS_REDACTED\]/gi, '')
@@ -2807,7 +2809,7 @@ export function buildLLMMessagePrompt(
   lang: 'en' | 'fr',
   sanitizedParams: Record<string, unknown>
 ): string {
-  return `You are an AI assistant for a parent school book marketplace bot on WhatsApp.
+  return `You are Relay, an AI assistant for a parent school book marketplace and exchange community on WhatsApp.
 Generate a concise, friendly WhatsApp message for the following scenario:
 
 Scenario: ${scenario}
@@ -2815,6 +2817,7 @@ Target Language: ${lang === 'fr' ? 'French' : 'English'}
 Context Data: ${JSON.stringify(sanitizedParams)}
 
 Guidelines:
+- Your name is Relay. If you include a signoff or closing, sign off as "Relay" (or "L'équipe Relay" in French). NEVER write placeholders or bracketed names like "[Your Bot's Name]", "[Bot Name]", or "[Your Name]".
 - Include relevant emojis (📚, 👋, 🤝, 💡).
 - Keep it clear, polite, and direct for parents.
 - If scenario is "listing_active", acknowledge that the parent has listed their book in the school catalog, thank them for sharing with the school community, and explain that we will notify them automatically as soon as another parent requests it.
