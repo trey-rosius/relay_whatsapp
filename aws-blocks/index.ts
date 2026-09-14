@@ -3846,11 +3846,25 @@ export function extractDemandSubject(
           /^(?:Year\d{1,2}|Class\d{1,2}|General|6eme|5eme|4eme|3eme|2nde|1ere|Terminale|SIL|CP|CE1|CE2|CM1|CM2)/i,
           ''
         )
-        .replace(/Books$/i, '') || query;
+        .replace(/Books$/i, '') || '';
+  }
+
+  // If still empty or only contains generic/year words
+  if (
+    !raw ||
+    /^(?:(?:Year|Année|Grade|Classe)\s*\d{1,2}|books?|livres?|textbooks?|general(?:\s+textbooks?)?)$/i.test(
+      raw
+    )
+  ) {
+    return lang === 'fr' ? 'Programme général' : 'General Syllabus';
   }
 
   const cleaned = cleanSubjectName(raw, lang);
-  if (cleaned === 'General Textbooks' || cleaned === 'Livres généraux') {
+  if (
+    cleaned === 'General Textbooks' ||
+    cleaned === 'Livres généraux' ||
+    /^(?:Year\s*\d+|Année\s*\d+)\s*(?:Books|Livres)$/i.test(cleaned)
+  ) {
     return lang === 'fr' ? 'Programme général' : 'General Syllabus';
   }
   return cleaned;
