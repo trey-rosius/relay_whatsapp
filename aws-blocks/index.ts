@@ -457,6 +457,57 @@ export async function sendWhatsAppInteractiveMessage(
   });
 }
 
+/**
+ * Downloads media bytes from Meta WhatsApp Graph API using the verified bot token.
+ */
+export async function fetchWhatsAppMedia(
+  mediaId: string
+): Promise<{ bytes: Uint8Array; format: 'jpeg' | 'png' | 'webp'; mimeType: string } | null> {
+  try {
+    const creds = await getWhatsAppCredentials();
+    if (!creds.token || creds.token === 'mock_whatsapp_token') {
+      return null;
+    }
+
+    const metaRes = await fetch(`https://graph.facebook.com/v25.0/${mediaId}`, {
+      headers: { Authorization: `Bearer ${creds.token}` },
+    });
+    if (!metaRes.ok) {
+      console.warn(`[FetchMedia] Meta Graph API query failed (${metaRes.status})`);
+      return null;
+    }
+    const metaJson: any = await metaRes.json();
+    const mediaUrl = metaJson?.url;
+    const mimeType = metaJson?.mime_type || 'image/jpeg';
+    if (!mediaUrl) return null;
+
+    const fileRes = await fetch(mediaUrl, {
+      headers: {
+        Authorization: `Bearer ${creds.token}`,
+        'User-Agent': 'curl/7.64.1',
+      },
+    });
+    if (!fileRes.ok) {
+      console.warn(`[FetchMedia] Meta binary media download failed (${fileRes.status})`);
+      return null;
+    }
+    const arrayBuf = await fileRes.arrayBuffer();
+    const format: 'jpeg' | 'png' | 'webp' = mimeType.includes('png')
+      ? 'png'
+      : mimeType.includes('webp')
+        ? 'webp'
+        : 'jpeg';
+    return {
+      bytes: new Uint8Array(arrayBuf),
+      format,
+      mimeType,
+    };
+  } catch (err) {
+    console.warn('[FetchMedia] Error downloading WhatsApp media:', err);
+    return null;
+  }
+}
+
 // ─── 1. Data Models (DynamoDB via DistributedTable) ──────────────────────────
 
 export const DOMAIN_TYPES = ['Mathematics', 'Science', 'Languages', 'Humanities', 'Arts'] as const;
@@ -1193,21 +1244,50 @@ export const processWhatsAppInbound = withDurableExecution<
       });
     });
 
-    // Step 1: Media Retrieval from Meta Graph API
-    await context.step(`fetch-media-${reqId}`, async () => {
+    // Step 1: Media Retrieval from Meta Graph API or direct payload upload
+    const mediaResult = await context.step(`fetch-media-${reqId}`, async () => {
       return await tracer.startSegment('step_fetch_media', async (segment) => {
-        if (payload.media_id) {
-          const creds = await getWhatsAppCredentials();
+        if (payload.image_bytes && payload.image_bytes.length > 0) {
           segment.addAnnotation('hasMedia', true);
           return {
-            mediaId: payload.media_id,
-            url: `https://graph.facebook.com/v25.0/${payload.media_id}?access_token=${creds.token}`,
-            mimeType: 'image/jpeg',
-            byteSize: 1024 * 45,
+            hasMedia: true,
+            imageBytes: payload.image_bytes,
+            format: payload.image_format || 'jpeg',
+            mimeType: payload.image_format === 'png' ? 'image/png' : 'image/jpeg',
           };
         }
+
+        if (payload.image_base64) {
+          segment.addAnnotation('hasMedia', true);
+          const buf = Buffer.from(payload.image_base64, 'base64');
+          return {
+            hasMedia: true,
+            imageBytes: new Uint8Array(buf),
+            format: payload.image_format || 'jpeg',
+            mimeType: payload.image_format === 'png' ? 'image/png' : 'image/jpeg',
+          };
+        }
+
+        if (payload.media_id) {
+          segment.addAnnotation('hasMedia', true);
+          const media = await fetchWhatsAppMedia(payload.media_id);
+          if (media) {
+            return {
+              hasMedia: true,
+              imageBytes: media.bytes,
+              format: media.format,
+              mimeType: media.mimeType,
+            };
+          }
+          return {
+            hasMedia: false,
+            mediaId: payload.media_id,
+            mimeType: 'image/jpeg',
+          };
+        }
+
         segment.addAnnotation('hasMedia', false);
-        return { textOnly: payload.message_text || 'No media provided' };
+        return { hasMedia: false, textOnly: payload.message_text || 'No media provided' };
       });
     });
 
@@ -1709,8 +1789,16 @@ export const processWhatsAppInbound = withDurableExecution<
         }
 
         const textToAnalyze =
-          payload.message_text || 'Year 5 Chemistry Book in excellent condition';
-        return await parseParentMessageIntentsWithLLM(textToAnalyze);
+          payload.message_text ||
+          (mediaResult?.hasMedia
+            ? 'I have this book'
+            : 'Year 5 Chemistry Book in excellent condition');
+        return await parseParentMessageIntentsWithLLM(
+          textToAnalyze,
+          mediaResult?.hasMedia && mediaResult.imageBytes
+            ? { bytes: mediaResult.imageBytes, format: mediaResult.format }
+            : null
+        );
       });
     });
 
@@ -2515,6 +2603,9 @@ export const processWhatsAppInbound = withDurableExecution<
 
 export interface WhatsAppInboundPayload {
   media_id?: string;
+  image_base64?: string;
+  image_bytes?: Uint8Array;
+  image_format?: 'jpeg' | 'png' | 'webp';
   from_phone: string;
   message_text?: string;
   rawSignature?: string;
@@ -2862,7 +2953,23 @@ export async function generateLLMMessage(
   });
 }
 
-export function buildIntentClassificationPrompt(sanitizedText: string): string {
+export function buildIntentClassificationPrompt(
+  sanitizedText: string,
+  hasImage: boolean = false
+): string {
+  const imageGuidance = hasImage
+    ? `\n\nATTACHED BOOK COVER IMAGE GUIDANCE:
+An image of one or more school textbook covers is attached to this message.
+1. Inspect the cover image carefully. Read the EXACT textbook title, edition, authors, and publisher visible on the cover (e.g. "Cambridge Primary Mathematics Learner's Book 2", "Cambridge Primary Science Learner's Book 2", "Cambridge Primary Global Perspectives Learner's Skills Book 2").
+2. Detect the school grade/year from the cover:
+   - "Learner's Book 2" / "Primary 2" -> Year 2 ("Year2")
+   - "Learner's Book <N>" / "Stage <N>" / "Primary <N>" -> Year <N> ("Year<N>")
+   - "6ème" -> Year 7, "5ème" -> Year 8, "4ème" -> Year 9, "3ème" -> Year 10, "2nde" -> Year 11, "1ère" -> Year 12, "Terminale" -> Year 13.
+3. If user says "i have these books", "selling", "selling these", or sends photos with minimal/no text, classify as "offer" intent for each book detected (DO NOT output "offer_inquiry"). If user says "looking for" or "need", classify as "demand".
+4. Set "domain" to one of: "Mathematics", "Science", "Languages", "Humanities", "Arts". For Global Perspectives, use "Humanities".
+5. Set "concept" to format "Year<N><Subject>" (e.g. "Year2Mathematics", "Year2Science", "Year2GlobalPerspectives").`
+    : '';
+
   return `You are an AI intent classification engine for a bilingual (English & French) parent school book marketplace bot on WhatsApp.
 
 Analyze the user's message semantically. Understand typos, slang, informal language, abbreviations, contractions, and true intent from full sentence context.
@@ -2880,7 +2987,7 @@ Categories of intent:
 10. "contact_inquiry": The parent is asking for the contact information, phone number, or identity of the parent they matched with for a book exchange (e.g., "which parent", "who has the book", "give me his number", "quel parent", "donne son numéro", "qui a le livre", "contact du vendeur", "what is their phone number").
 11. "other_grades": The parent wants to browse remaining or overflow classes/grades outside the primary list (e.g., "other grades", "autres classes", "more grades", "plus de classes", "other levels", "autres niveaux").
 
-User Message: "${sanitizedText.replace(/"/g, '\\"')}"
+User Message: "${sanitizedText.replace(/"/g, '\\"')}"${imageGuidance}
 
 Rules for fields:
 - MULTI-BOOK EXTRACTION: When a parent lists multiple subjects or books (e.g. "I have year 10 and 11 books: Chemistry, Physics, Additional maths, English, French, ICT, Maths, Economics, Biology"), extract EACH individual book/subject as a separate item in the "intents" array. Apply the specified year(s) to every listed subject (e.g. "Year 10 & 11 Chemistry", "Year 10 & 11 Physics").
@@ -2912,20 +3019,24 @@ Respond ONLY with valid JSON inside a \`\`\`json block.`;
  * with pre-prompt PII redaction and Bedrock Guardrails.
  */
 export async function parseParentMessageIntentsWithLLM(
-  text: string
+  text: string,
+  imageInput?: { bytes: Uint8Array; format?: 'jpeg' | 'png' | 'webp' } | null
 ): Promise<ExtractedIntentItem[]> {
   return await tracer.startSegment('bedrock_parse_parent_message_intents', async (segment) => {
-    // Fast-path for greetings, tutorials, and help questions
-    const trimmed = text.trim().toLowerCase();
-    const cleanTrimmed = trimmed.replace(/^[!.,?\s]+|[!.,?\s]+$/g, '').trim();
+    const hasImage = !!(imageInput?.bytes && imageInput.bytes.length > 0);
 
-    const isGreetingOrHelp =
-      /^(?:hi|hello|hey|bonjour|salut|coucou|aide|help|tutorial|tutorials|tutoriel|tutoriels|how to use|how do i use|how do i use this app|\?)$/i.test(
-        cleanTrimmed
-      ) ||
-      /\b(how do i use this app|how to use this app|tutorials?|tutoriels?|comment utiliser|mode d'emploi)\b/i.test(
-        cleanTrimmed
-      );
+    // Fast-path only when NO image is attached (images require multimodal vision inspection)
+    if (!hasImage) {
+      const trimmed = text.trim().toLowerCase();
+      const cleanTrimmed = trimmed.replace(/^[!.,?\s]+|[!.,?\s]+$/g, '').trim();
+
+      const isGreetingOrHelp =
+        /^(?:hi|hello|hey|bonjour|salut|coucou|aide|help|tutorial|tutorials|tutoriel|tutoriels|how to use|how do i use|how do i use this app|\?)$/i.test(
+          cleanTrimmed
+        ) ||
+        /\b(how do i use this app|how to use this app|tutorials?|tutoriels?|comment utiliser|mode d'emploi)\b/i.test(
+          cleanTrimmed
+        );
 
     if (isGreetingOrHelp) {
       const isFr = /\b(?:bonjour|salut|coucou|aide|tutoriel|tutoriels|comment|livres?)\b/i.test(
@@ -3122,13 +3233,28 @@ export async function parseParentMessageIntentsWithLLM(
         },
       ];
     }
+  }
 
-    // Anonymize in-prompt PII
+  // Anonymize in-prompt PII
     const sanitizedText = maskPromptPII(text);
     segment.addAnnotation('originalTextLength', text.length);
     segment.addAnnotation('hasPIIRedacted', sanitizedText !== text);
+    segment.addAnnotation('hasImage', hasImage);
 
-    const prompt = buildIntentClassificationPrompt(sanitizedText);
+    const prompt = buildIntentClassificationPrompt(sanitizedText, hasImage);
+
+    const messageContent: any[] = [];
+    if (hasImage && imageInput?.bytes) {
+      messageContent.push({
+        image: {
+          format: imageInput.format || 'jpeg',
+          source: {
+            bytes: imageInput.bytes,
+          },
+        },
+      });
+    }
+    messageContent.push({ text: prompt });
 
     const guardrailConfig = process.env.BEDROCK_GUARDRAIL_ID
       ? {
@@ -3145,7 +3271,7 @@ export async function parseParentMessageIntentsWithLLM(
       response = await bedrockClient.send(
         new ConverseCommand({
           modelId: 'us.amazon.nova-lite-v1:0',
-          messages: [{ role: 'user', content: [{ text: prompt }] }],
+          messages: [{ role: 'user', content: messageContent }],
           inferenceConfig: { temperature: 0.1, maxTokens: 2048 },
           guardrailConfig,
         })
@@ -3162,14 +3288,25 @@ export async function parseParentMessageIntentsWithLLM(
           dimensions: { target: 'bedrock_nova_lite' },
         });
       }
-      response = await bedrockClient.send(
-        new ConverseCommand({
-          modelId: 'us.amazon.nova-pro-v1:0',
-          messages: [{ role: 'user', content: [{ text: prompt }] }],
-          inferenceConfig: { temperature: 0.1, maxTokens: 2048 },
-          guardrailConfig,
-        })
-      );
+      try {
+        response = await bedrockClient.send(
+          new ConverseCommand({
+            modelId: 'us.amazon.nova-pro-v1:0',
+            messages: [{ role: 'user', content: messageContent }],
+            inferenceConfig: { temperature: 0.1, maxTokens: 2048 },
+            guardrailConfig,
+          })
+        );
+      } catch (proErr: any) {
+        // Fallback without guardrail in case guardrail does not support multimodal input
+        response = await bedrockClient.send(
+          new ConverseCommand({
+            modelId: 'us.amazon.nova-lite-v1:0',
+            messages: [{ role: 'user', content: messageContent }],
+            inferenceConfig: { temperature: 0.1, maxTokens: 2048 },
+          })
+        );
+      }
       const latency = Date.now() - startTime;
       metrics.emit('BedrockLatency', latency, {
         unit: 'Milliseconds',
@@ -3343,7 +3480,7 @@ export function hasExplicitSchoolYear(concept: string, text: string): boolean {
   }
   // Or if the raw message text has an explicit school year
   const textHasYear =
-    /(?:Year|Année|Grade|Classe(?:\s+de)?)\s*\d{1,2}|\b(?:6[èe]me|5[èe]me|4[èe]me|3[èe]me|2nde|1[èe]re|Terminale|CP|CE1|CE2|CM1|CM2)\b/i.test(
+    /(?:Year|Année|Grade|Classe(?:\s+de)?|Primary|Learner(?:'s)?\s*(?:Skills)?\s*Book|Stage)\s*\d{1,2}|\b(?:6[èe]me|5[èe]me|4[èe]me|3[èe]me|2nde|1[èe]re|Terminale|CP|CE1|CE2|CM1|CM2)\b/i.test(
       text || ''
     );
   return textHasYear;
@@ -3360,7 +3497,7 @@ export function normalizeConceptKey(rawConcept: unknown, fallbackText: string = 
   const fallbackStr = typeof fallbackText === 'string' ? fallbackText : '';
   const yearMatch =
     clean.match(/(?:Year|Année)\s*(\d{1,2})/i) ||
-    fallbackStr.match(/(?:Year|Année|Grade)\s*(\d{1,2})/i);
+    fallbackStr.match(/(?:Year|Année|Grade|Primary|Learner(?:'s)?\s*(?:Skills)?\s*Book|Stage)\s*(\d{1,2})/i);
 
   const num = yearMatch ? yearMatch[1] : '';
   const prefix = num ? `Year${num}` : 'General';
@@ -3406,7 +3543,9 @@ export function inferDomainFromConcept(concept: string): (typeof DOMAIN_TYPES)[n
     lower.includes('social') ||
     lower.includes('human') ||
     lower.includes('econ') ||
-    lower.includes('philosop')
+    lower.includes('philosop') ||
+    lower.includes('global') ||
+    lower.includes('perspective')
   )
     return 'Humanities';
   if (
@@ -3516,6 +3655,11 @@ export const SUBJECT_CATALOG: readonly SubjectDefinition[] = [
     fr: 'Sciences',
   },
   {
+    patterns: [/\bglobal\s*perspectives?\b/i, /\bperspectives?\s*mondiales?\b/i],
+    en: 'Global Perspectives',
+    fr: 'Perspectives mondiales',
+  },
+  {
     patterns: [/\bgeneral\b/i, /\bg[ée]n[ée]ra(?:l|ux)\b/i, /\btextbooks?\b/i, /\bmanuels?\b/i],
     en: 'General Textbooks',
     fr: 'Livres généraux',
@@ -3578,6 +3722,14 @@ export function extractSchoolYear(concept?: string, title?: string, text?: strin
     combined.match(/\bYear(\d{1,2})\b/i);
   if (m) {
     return `Year${m[1]}`;
+  }
+
+  // 1b. Cambridge Primary / Stage / Learner's Book level (e.g. "Primary 2", "Learner's Book 2", "Stage 2")
+  const cambridgeMatch = combined.match(
+    /(?:Primary|Learner(?:'s)?\s*(?:Skills)?\s*Book|Stage)\s*(\d{1,2})\b/i
+  );
+  if (cambridgeMatch) {
+    return `Year${cambridgeMatch[1]}`;
   }
 
   // 2. French school levels (Collège / Lycée)
@@ -5736,7 +5888,7 @@ export const webhookPost = new RawRoute(scope, 'webhook-post', {
 
     const incomingMsg = entry?.messages?.[0];
     const fromPhone = incomingMsg?.from || payload?.from_phone;
-    let messageText = incomingMsg?.text?.body || payload?.message_text;
+    let messageText = incomingMsg?.text?.body || incomingMsg?.image?.caption || payload?.message_text;
     const mediaId = incomingMsg?.image?.id || payload?.media_id;
 
     let interactive = payload?.interactive;
@@ -5766,7 +5918,7 @@ export const webhookPost = new RawRoute(scope, 'webhook-post', {
       }
     }
 
-    if (!fromPhone || (!messageText && !mediaId && !interactive)) {
+    if (!fromPhone || (!messageText && !mediaId && !interactive && !payload?.image_base64 && !payload?.image_bytes)) {
       context.response.status = 200;
       context.response.send({ status: 'ignored', message: 'No actionable message content' });
       return;
@@ -5776,6 +5928,9 @@ export const webhookPost = new RawRoute(scope, 'webhook-post', {
       from_phone: fromPhone,
       message_text: messageText,
       media_id: mediaId,
+      image_base64: payload?.image_base64,
+      image_bytes: payload?.image_bytes,
+      image_format: payload?.image_format,
       interactive,
     });
 

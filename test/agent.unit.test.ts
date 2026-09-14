@@ -413,4 +413,40 @@ test('interactive confirmation: clicking "✅ Confirm Request" connects parent t
   }
 });
 
+test('multimodal agent: extracts book cover from photo without parent typing title or grade', async () => {
+  const fs = await import('node:fs');
+
+  const sampleImagePath =
+    '/Users/ro/.gemini/antigravity-ide/brain/2eb05d9c-f297-4278-aaaa-da8495f90efc/.user_uploaded/media_1789389264817.jpg';
+  if (!fs.existsSync(sampleImagePath)) {
+    return;
+  }
+
+  const imageBytes = new Uint8Array(fs.readFileSync(sampleImagePath));
+  const sellerPhone = '+237699554433';
+
+  const apiHandlers = typeof (api as any) === 'function' ? (api as any)() : api;
+
+  // Parent sends photo with text: "i have these books"
+  const response = await apiHandlers.handleWebhook({
+    from_phone: sellerPhone,
+    message_text: 'i have these books',
+    image_bytes: imageBytes,
+    image_format: 'jpeg',
+  });
+
+  assert.strictEqual(response.success, true);
+  assert.notStrictEqual(response.result?.status, 'needs_year_clarification');
+
+  // Verify book was saved to active inventory with correct title and concept
+  const allItems = await Array.fromAsync(activeInventory.scan());
+  const addedBook = allItems.find((i) => i.sellerPhone === sellerPhone);
+  assert.ok(addedBook, 'Book must be added to inventory from image');
+  assert.strictEqual(addedBook.concept, 'Year2Mathematics', 'Must extract Year2Mathematics');
+  assert.ok(addedBook.title.includes('Mathematics'), 'Title must contain Mathematics');
+
+  // Clean up
+  await activeInventory.delete({ itemId: addedBook.itemId });
+});
+
 
