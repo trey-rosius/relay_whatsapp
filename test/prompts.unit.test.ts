@@ -15,6 +15,8 @@ import {
   cleanSubjectName,
   inferDomainFromConcept,
   formatDemandDisplay,
+  buildGroupedDemandBoardText,
+  extractDemandYearGroup,
   parseParentMessageIntentsWithLLM,
   normalizeTextForMatching,
   detectMessageLanguage,
@@ -918,6 +920,61 @@ test('whatsapp translation: auto-translates book subjects and demands based on u
   const demand2 = { concept: 'Year5Mathematics', requestedQuery: 'Livre de math 5e' };
   assert.strictEqual(formatDemandDisplay(demand2, 'fr'), '• *Mathématiques* (Année 5)');
   assert.strictEqual(formatDemandDisplay(demand2, 'en'), '• *Mathematics* (Year 5)');
+});
+
+test('whatsapp demand board: groups requested books by year and aggregates parent counts', () => {
+  const demands = [
+    { demandId: 'd1', concept: 'Year5Mathematics', requestedQuery: 'Looking for Year 5 Maths' },
+    { demandId: 'd2', concept: 'Year5Mathematics', requestedQuery: 'Year 5 Maths textbook' },
+    { demandId: 'd3', concept: 'Year5French', requestedQuery: 'Looking for Year 5 French' },
+    { demandId: 'd4', concept: 'Year8Science', requestedQuery: 'Year 8 Science' },
+    { demandId: 'd5', concept: 'TerminalePhysique', requestedQuery: 'Terminale C Physique' },
+  ];
+
+  // Test English layout
+  const enText = buildGroupedDemandBoardText(demands, 'en');
+  assert.ok(enText.includes('Books Wanted by Parents (5)'));
+  assert.ok(enText.includes('*Year 5*'));
+  assert.ok(enText.includes('• *Mathematics* (2 requested)'));
+  assert.ok(enText.includes('• *French* (1 requested)'));
+  assert.ok(enText.includes('*Year 8*'));
+  assert.ok(enText.includes('• *Science* (1 requested)'));
+  assert.ok(enText.includes('*Terminale*'));
+  assert.ok(enText.includes('• *Physics* (1 requested)'));
+
+  // Ensure Year 5 appears before Year 8 before Terminale
+  const idxY5 = enText.indexOf('*Year 5*');
+  const idxY8 = enText.indexOf('*Year 8*');
+  const idxTerm = enText.indexOf('*Terminale*');
+  assert.ok(idxY5 < idxY8, 'Year 5 must appear before Year 8');
+  assert.ok(idxY8 < idxTerm, 'Year 8 must appear before Terminale');
+
+  // Test French layout
+  const frText = buildGroupedDemandBoardText(demands, 'fr');
+  assert.ok(frText.includes('Livres Recherchés par les Parents (5)'));
+  assert.ok(frText.includes('*Année 5*'));
+  assert.ok(frText.includes('• *Mathématiques* (2 demandés)'));
+  assert.ok(frText.includes('• *Français* (1 demandé)'));
+  assert.ok(frText.includes('*Année 8*'));
+  assert.ok(frText.includes('• *Sciences* (1 demandé)'));
+  // Test extractDemandYearGroup
+  assert.strictEqual(
+    extractDemandYearGroup({ concept: 'Year5Maths' }, 'en').displayLabel,
+    'Year 5'
+  );
+  assert.strictEqual(
+    extractDemandYearGroup({ concept: 'Year5Maths' }, 'fr').displayLabel,
+    'Année 5'
+  );
+  assert.strictEqual(
+    extractDemandYearGroup({ concept: 'TerminalePhysique' }, 'fr').displayLabel,
+    'Terminale'
+  );
+  assert.strictEqual(extractDemandYearGroup({ concept: '4emeScience' }, 'fr').displayLabel, '4ème');
+  assert.strictEqual(
+    extractDemandYearGroup({ concept: 'Class6English' }, 'en').displayLabel,
+    'Class 6'
+  );
 });
 
 test('whatsapp subject catalog: declarative normalization strips suffixes and handles edge cases', () => {

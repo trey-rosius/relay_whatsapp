@@ -2062,21 +2062,7 @@ export const processWhatsAppInbound = withDurableExecution<
               await dispatchTextMessage(payload.from_phone, emptyMsg);
               lastReplyMessage = emptyMsg;
             } else {
-              const formattedDemands = Array.from(
-                new Set(openDemands.map((d) => formatDemandDisplay(d, item.lang)))
-              );
-              const demandsText = formattedDemands.join('\n');
-              const header =
-                item.lang === 'fr'
-                  ? `📋 *Livres Recherchés par les Parents (${formattedDemands.length})* :\n\nVoici les manuels demandés par notre communauté. Si vous possédez l'un de ces livres, décrivez-le ou envoyez une photo ! 👇`
-                  : `📋 *Books Wanted by Parents (${formattedDemands.length})* :\n\nHere are textbooks currently requested by the school community. If you have any of these, send a photo or description! 👇`;
-
-              const footer =
-                item.lang === 'fr'
-                  ? `\n\n💡 Répondez avec *"J'ai [Matière/Année]"* pour le mettre à disposition !`
-                  : `\n\n💡 Reply with *"I have [Subject/Year]"* to list it for a parent!`;
-
-              const fullMessage = `${header}\n\n${demandsText}${footer}`;
+              const fullMessage = buildGroupedDemandBoardText(openDemands, item.lang);
               await dispatchTextMessage(payload.from_phone, fullMessage);
               lastReplyMessage = fullMessage;
             }
@@ -3727,6 +3713,236 @@ export function formatDemandDisplay(
     return `• *${displaySubject}* (${yearStr})`;
   }
   return `• *${displaySubject}*`;
+}
+
+/**
+ * Normalizes and categorizes a school year/class level for Demand Board grouping.
+ */
+export function extractDemandYearGroup(
+  demand: { concept?: string; requestedQuery?: string; title?: string; [key: string]: any },
+  lang: 'en' | 'fr'
+): { yearKey: string; sortOrder: number; displayLabel: string } {
+  const combined = `${demand.concept || ''} ${demand.requestedQuery || ''} ${demand.title || ''}`;
+
+  // 1. Explicit Year/Année/Grade/Classe + number (e.g. "Year 5", "Année 5", "Grade 5", "Year5")
+  const yearMatch =
+    combined.match(/(?:Year|Année|Grade|Classe(?:\s+de)?)\s*(\d{1,2})\b/i) ||
+    combined.match(/\bYear(\d{1,2})\b/i);
+  if (yearMatch) {
+    const num = parseInt(yearMatch[1], 10);
+    return {
+      yearKey: `Year${num}`,
+      sortOrder: num,
+      displayLabel: lang === 'fr' ? `Année ${num}` : `Year ${num}`,
+    };
+  }
+
+  // 2. Class <N> (Cameroon Primary, e.g. "Class 6")
+  const classMatch = combined.match(/\bClass\s*(\d{1,2})\b/i);
+  if (classMatch) {
+    const num = parseInt(classMatch[1], 10);
+    return {
+      yearKey: `Class${num}`,
+      sortOrder: num,
+      displayLabel: lang === 'fr' ? `Classe ${num}` : `Class ${num}`,
+    };
+  }
+
+  // 3. French secondary curriculum levels (Collège & Lycée)
+  if (/\b(?:6[èe]me|6eme)\b/i.test(combined)) {
+    return {
+      yearKey: '6eme',
+      sortOrder: 7,
+      displayLabel: lang === 'fr' ? '6ème' : '6ème (Year 7)',
+    };
+  }
+  if (/\b(?:5[èe]me|5eme)\b/i.test(combined)) {
+    return {
+      yearKey: '5eme',
+      sortOrder: 8,
+      displayLabel: lang === 'fr' ? '5ème' : '5ème (Year 8)',
+    };
+  }
+  if (/\b(?:4[èe]me|4eme)\b/i.test(combined)) {
+    return {
+      yearKey: '4eme',
+      sortOrder: 9,
+      displayLabel: lang === 'fr' ? '4ème' : '4ème (Year 9)',
+    };
+  }
+  if (/\b(?:3[èe]me|3eme)\b/i.test(combined)) {
+    return {
+      yearKey: '3eme',
+      sortOrder: 10,
+      displayLabel: lang === 'fr' ? '3ème' : '3ème (Year 10)',
+    };
+  }
+  if (/\b(?:2nde|seconde)\b/i.test(combined)) {
+    return {
+      yearKey: '2nde',
+      sortOrder: 11,
+      displayLabel: lang === 'fr' ? '2nde' : '2nde (Year 11)',
+    };
+  }
+  if (/\b(?:1[èe]re|premi[èe]re)\b/i.test(combined)) {
+    return {
+      yearKey: '1ere',
+      sortOrder: 12,
+      displayLabel: lang === 'fr' ? 'Première' : 'Première (Year 12)',
+    };
+  }
+  if (/\bterminale\b/i.test(combined)) {
+    return {
+      yearKey: 'Terminale',
+      sortOrder: 13,
+      displayLabel: 'Terminale',
+    };
+  }
+
+  // 4. French primary curriculum levels (SIL, CP, CE1, CE2, CM1, CM2)
+  if (/\bSIL\b/i.test(combined)) return { yearKey: 'SIL', sortOrder: 1, displayLabel: 'SIL' };
+  if (/\bCP\b/i.test(combined)) return { yearKey: 'CP', sortOrder: 2, displayLabel: 'CP' };
+  if (/\bCE1\b/i.test(combined)) return { yearKey: 'CE1', sortOrder: 3, displayLabel: 'CE1' };
+  if (/\bCE2\b/i.test(combined)) return { yearKey: 'CE2', sortOrder: 4, displayLabel: 'CE2' };
+  if (/\bCM1\b/i.test(combined)) return { yearKey: 'CM1', sortOrder: 5, displayLabel: 'CM1' };
+  if (/\bCM2\b/i.test(combined)) return { yearKey: 'CM2', sortOrder: 6, displayLabel: 'CM2' };
+
+  // 5. Fallback: general / unassigned
+  return {
+    yearKey: 'Other',
+    sortOrder: 999,
+    displayLabel: lang === 'fr' ? 'Autres Demandes' : 'General & Other Demands',
+  };
+}
+
+/**
+ * Normalizes subject for Demand Board grouping.
+ */
+export function extractDemandSubject(
+  demand: { concept?: string; requestedQuery?: string; title?: string; [key: string]: any },
+  lang: 'en' | 'fr'
+): string {
+  const concept = demand.concept || '';
+  const query = demand.requestedQuery || demand.title || '';
+
+  // 1. Remove grade markers and conversational queries
+  let raw = query
+    .replace(
+      /(?:Looking for|Je cherche|I need|Recherche|Books for Year|Livres pour l'année|Year|Année|Grade|Classe(?:\s+de)?)\s*\d{1,2}/gi,
+      ''
+    )
+    .replace(
+      /\b(?:6[èe]me|5[èe]me|4[èe]me|3[èe]me|2nde|1[èe]re|premi[èe]re|terminale|class\s*\d{1,2}|sil|cp|ce1|ce2|cm1|cm2)\b/gi,
+      ''
+    )
+    .replace(/\b(?:textbooks?|books?|livres?|manuels?|cahiers?)\b/gi, '')
+    .trim();
+
+  // 2. If stripped query is empty, try concept
+  if (!raw || /^textbooks?$|^books?$|^livres?$/i.test(raw)) {
+    raw =
+      concept
+        .replace(
+          /^(?:Year\d{1,2}|Class\d{1,2}|General|6eme|5eme|4eme|3eme|2nde|1ere|Terminale|SIL|CP|CE1|CE2|CM1|CM2)/i,
+          ''
+        )
+        .replace(/Books$/i, '') || query;
+  }
+
+  const cleaned = cleanSubjectName(raw, lang);
+  if (cleaned === 'General Textbooks' || cleaned === 'Livres généraux') {
+    return lang === 'fr' ? 'Programme général' : 'General Syllabus';
+  }
+  return cleaned;
+}
+
+/**
+ * Builds a beautifully structured, year-grouped Demand Board message for WhatsApp.
+ */
+export function buildGroupedDemandBoardText(
+  openDemands: Array<{
+    concept?: string;
+    requestedQuery?: string;
+    title?: string;
+    [key: string]: any;
+  }>,
+  lang: 'en' | 'fr'
+): string {
+  if (!openDemands || openDemands.length === 0) {
+    return lang === 'fr'
+      ? '📋 Aucune demande en attente actuellement.'
+      : '📋 No pending demands on the board right now.';
+  }
+
+  interface YearGroupData {
+    displayLabel: string;
+    sortOrder: number;
+    subjects: Record<string, { displaySubject: string; count: number }>;
+  }
+
+  const groups: Record<string, YearGroupData> = {};
+
+  for (const demand of openDemands) {
+    const { yearKey, sortOrder, displayLabel } = extractDemandYearGroup(demand, lang);
+    const subject = extractDemandSubject(demand, lang);
+    const subKey = subject.toLowerCase();
+
+    if (!groups[yearKey]) {
+      groups[yearKey] = {
+        displayLabel,
+        sortOrder,
+        subjects: {},
+      };
+    }
+
+    if (!groups[yearKey].subjects[subKey]) {
+      groups[yearKey].subjects[subKey] = {
+        displaySubject: subject,
+        count: 0,
+      };
+    }
+
+    groups[yearKey].subjects[subKey].count += 1;
+  }
+
+  const sortedYearKeys = Object.keys(groups).sort((a, b) => {
+    return groups[a].sortOrder - groups[b].sortOrder;
+  });
+
+  const totalDemands = openDemands.length;
+  const header =
+    lang === 'fr'
+      ? `📋 *Livres Recherchés par les Parents (${totalDemands})* :\n\nVoici les manuels demandés par notre communauté. Si vous possédez l'un de ces livres, décrivez-le ou envoyez une photo ! 👇`
+      : `📋 *Books Wanted by Parents (${totalDemands})* :\n\nHere are textbooks currently requested by the school community. If you have any of these, send a photo or description! 👇`;
+
+  const parts: string[] = [header];
+
+  for (const yKey of sortedYearKeys) {
+    const group = groups[yKey];
+    const items = Object.values(group.subjects).sort((a, b) =>
+      a.displaySubject.localeCompare(b.displaySubject)
+    );
+
+    parts.push(`\n*${group.displayLabel}*`);
+    for (const item of items) {
+      const countLabel =
+        lang === 'fr'
+          ? item.count > 1
+            ? `${item.count} demandés`
+            : `${item.count} demandé`
+          : `${item.count} requested`;
+      parts.push(`• *${item.displaySubject}* (${countLabel})`);
+    }
+  }
+
+  const footer =
+    lang === 'fr'
+      ? `\n💡 Répondez avec *"J'ai [Matière/Année]"* pour le mettre à disposition !`
+      : `\n💡 Reply with *"I have [Subject/Year]"* to list it for a parent!`;
+
+  parts.push(footer);
+
+  return parts.join('\n');
 }
 
 export function formatConditionBadges(conditions: string[], lang: 'en' | 'fr'): string {
