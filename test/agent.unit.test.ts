@@ -8,6 +8,7 @@ import {
   buildInteractiveYearSubjectsPayload,
   buildParentActivitySummary,
   parseParentMessageIntentsWithLLM,
+  hasExplicitSchoolYear,
   api,
 } from '../aws-blocks/index.js';
 
@@ -330,4 +331,86 @@ test('semantic discrimination: active transaction verbs distinguish demand and o
     `Should detect offer intent for "J'ai...", got: ${offerRes[0].intent}`
   );
 });
+
+test('hasExplicitSchoolYear: accurately detects school year in structured concept or text', () => {
+  // Concept with explicit school year should return true regardless of button text
+  assert.strictEqual(hasExplicitSchoolYear('Year9Biology', '✅ Confirm Request'), true);
+  assert.strictEqual(hasExplicitSchoolYear('Year9Biology', ''), true);
+  assert.strictEqual(hasExplicitSchoolYear('Year9Biology', 'Je veux ce livre'), true);
+  assert.strictEqual(hasExplicitSchoolYear('Year10Mathematics', '✅ Confirmer'), true);
+
+  // Concept without explicit school year (General...) should require year in text
+  assert.strictEqual(hasExplicitSchoolYear('GeneralBiology', 'I want biology'), false);
+  assert.strictEqual(hasExplicitSchoolYear('GeneralBiology', 'I want Year 9 Biology'), true);
+  assert.strictEqual(hasExplicitSchoolYear('GeneralBooks', 'livres'), false);
+  assert.strictEqual(hasExplicitSchoolYear('GeneralBooks', 'livres de 3ème'), true);
+});
+
+test('interactive confirmation: clicking "✅ Confirm Request" connects parent to seller without year clarification prompt', async () => {
+  const sellerPhone = '+237699887766';
+  const buyerPhone = '+237699112233';
+  const itemId = `item_y9bio_${Date.now()}`;
+
+  // 1. Seed available inventory item for Year 9 Biology
+  await activeInventory.put({
+    itemId,
+    title: 'Biology (Year 9)',
+    sellerPhone,
+    status: 'active',
+    conditionType: 'Good',
+    description: 'Cambridge Biology Year 9 textbook',
+    concept: 'Year9Biology',
+    domain: 'Science',
+    providerCategory: 'HighSchool',
+    preferredLang: 'en',
+    createdAt: Date.now(),
+  });
+
+  try {
+    const apiHandlers = typeof (api as any) === 'function' ? (api as any)() : api;
+
+    // 2. Buyer clicks the WhatsApp interactive button "[ ✅ Confirm Request ]"
+    const response = await apiHandlers.handleWebhook({
+      from_phone: buyerPhone,
+      message_text: '✅ Confirm Request',
+      interactive: {
+        id: 'confirm_req_Year9Biology',
+        title: '✅ Confirm Request',
+      },
+    });
+
+    // 3. Must NOT ask for year clarification
+    assert.strictEqual(response.success, true);
+    assert.notStrictEqual(
+      response.result?.status,
+      'needs_year_clarification',
+      'Must not trigger year clarification when confirming a book with known school year'
+    );
+    assert.strictEqual(response.result?.status, 'matched', 'Must result in a successful match');
+
+    // 4. Verify book is reserved for the buyer
+    const allItems = await Array.fromAsync(activeInventory.scan());
+    const matchedBook = allItems.find((i) => i.itemId === itemId);
+    assert.ok(matchedBook, 'Matched book must exist');
+    assert.strictEqual(matchedBook.status, 'reserved');
+    assert.strictEqual(matchedBook.reservedForPhone, buyerPhone);
+    assert.ok(matchedBook.handoverCode, 'Handover code must be generated');
+
+    // 5. Verify demand record has clean title (not button label)
+    const allDemands = await Array.fromAsync(demandBoard.scan());
+    const buyerDemand = allDemands.find((d) => d.userPhone === buyerPhone && d.concept === 'Year9Biology');
+    assert.ok(buyerDemand, 'Demand must be created for buyer');
+    assert.strictEqual(buyerDemand.status, 'matched');
+    assert.strictEqual(buyerDemand.requestedQuery, 'Biology (Year 9)');
+
+    // 6. Clean up demand
+    if (buyerDemand) {
+      await demandBoard.delete({ demandId: buyerDemand.demandId });
+    }
+  } finally {
+    // Clean up inventory
+    await activeInventory.delete({ itemId });
+  }
+});
+
 

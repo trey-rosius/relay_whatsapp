@@ -1670,11 +1670,29 @@ export const processWhatsAppInbound = withDurableExecution<
             ''
           );
           const normConcept = normalizeConceptKey(rawConcept);
-          const title = payload.interactive.title || rawConcept;
+          const rawBtnTitle = (payload.interactive.title || '').trim();
+          const isGenericButton =
+            !rawBtnTitle ||
+            /^(?:✅|❌|confirm|confirmer|annuler|cancel)/i.test(rawBtnTitle) ||
+            payload.interactive.id.startsWith('confirm_req_');
+
           const isFr = /chimie|math[ée]matiques|anglais|physique|livres|ann[ée]e|confirmer/i.test(
-            title
+            rawBtnTitle || rawConcept
           );
           const lang = isFr ? 'fr' : 'en';
+
+          let title = rawBtnTitle;
+          if (isGenericButton) {
+            const yearMatch = normConcept.match(/Year(\d{1,2})/i);
+            const yearStr = yearMatch
+              ? lang === 'fr'
+                ? `Année ${yearMatch[1]}`
+                : `Year ${yearMatch[1]}`
+              : '';
+            const rawSub = normConcept.replace(/^(?:Year\d{1,2}|General)/i, '');
+            const dispSub = cleanSubjectName(rawSub, lang);
+            title = yearStr ? `${dispSub} (${yearStr})` : dispSub || rawConcept;
+          }
 
           return [
             {
@@ -3313,17 +3331,22 @@ export function sanitizeExtractedTitle(
 }
 
 export function hasExplicitSchoolYear(concept: string, text: string): boolean {
+  // If the structured concept already contains an explicit school year/grade
+  if (
+    concept &&
+    !concept.startsWith('General') &&
+    /(?:Year|Année|Grade)\d{1,2}|\b(?:6[èe]me|5[èe]me|4[èe]me|3[èe]me|2nde|1[èe]re|Terminale|CP|CE1|CE2|CM1|CM2)\b/i.test(
+      concept
+    )
+  ) {
+    return true;
+  }
+  // Or if the raw message text has an explicit school year
   const textHasYear =
     /(?:Year|Année|Grade|Classe(?:\s+de)?)\s*\d{1,2}|\b(?:6[èe]me|5[èe]me|4[èe]me|3[èe]me|2nde|1[èe]re|Terminale|CP|CE1|CE2|CM1|CM2)\b/i.test(
       text || ''
     );
-  if (textHasYear) {
-    return true;
-  }
-  if (!text?.trim() && /Year\d{1,2}/i.test(concept) && !concept.startsWith('General')) {
-    return true;
-  }
-  return false;
+  return textHasYear;
 }
 
 export function normalizeConceptKey(rawConcept: unknown, fallbackText: string = ''): string {
