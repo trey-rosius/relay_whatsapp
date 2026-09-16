@@ -305,8 +305,7 @@ function filterInventoryItems(items: ActiveInventoryItem[]): ActiveInventoryItem
           (item.concept && item.concept.toLowerCase().includes(q)) ||
           (item.description && item.description.toLowerCase().includes(q)) ||
           (item.domain && item.domain.toLowerCase().includes(q)) ||
-          (item.providerCategory && item.providerCategory.toLowerCase().includes(q)) ||
-          (item.sellerPhone && item.sellerPhone.toLowerCase().includes(q));
+          (item.providerCategory && item.providerCategory.toLowerCase().includes(q));
         if (!matchesSearch) return false;
       }
 
@@ -364,7 +363,6 @@ function filterDemandItems(
           (item.requestedQuery && item.requestedQuery.toLowerCase().includes(q)) ||
           (item.concept && item.concept.toLowerCase().includes(q)) ||
           (item.domain && item.domain.toLowerCase().includes(q)) ||
-          (item.userPhone && item.userPhone.toLowerCase().includes(q)) ||
           (item.handoverCode && item.handoverCode.toLowerCase().includes(q));
         if (!matchesSearch) return false;
       }
@@ -814,7 +812,7 @@ function renderFilterToolbar(showClassFilter = true) {
           <input
             type="text"
             class="search-input"
-            placeholder="Search titles, concepts, subjects, or phone..."
+            placeholder="Search titles, concepts, subjects, or grades..."
             .value=${searchQuery}
             @input=${(e: any) => {
               searchQuery = e.target.value;
@@ -918,7 +916,7 @@ function renderFilterToolbar(showClassFilter = true) {
                   }}
                 >
                   <option value="all">👨‍👩‍👧 All Parent Sellers</option>
-                  ${distinctSellers.map((s) => html`<option value="${s}">Seller: ${s}</option>`)}
+                  ${distinctSellers.map((s, idx) => html`<option value="${s}">Family Collection #${idx + 1}</option>`)}
                 </select>
               `
             : ''
@@ -1209,7 +1207,7 @@ function renderBookCard(item: ActiveInventoryItem) {
                 <div>
                   🎓
                   <strong>Handover Completed</strong>
-                  ${item.soldToPhone ? html`to <strong style="color:var(--text);">${item.soldToPhone}</strong>` : ''}
+                  to <strong style="color:var(--text);">Community Parent</strong>
                 </div>
                 ${item.soldAt ? html`<div style="font-size:0.75rem;color:var(--text-dim);">Sold on ${formatExactDate(item.soldAt)}</div>` : ''}
               </div>
@@ -1221,7 +1219,7 @@ function renderBookCard(item: ActiveInventoryItem) {
                 >
                   ⏳
                   <strong>Reserved on 48h Hold</strong>
-                  ${item.reservedForPhone ? html`for <strong style="color:var(--text);">${item.reservedForPhone}</strong>` : ''}
+                  for <strong style="color:var(--text);">Community Parent</strong>
                 </div>
               `
             : ''
@@ -1238,7 +1236,7 @@ function renderBookCard(item: ActiveInventoryItem) {
               title="Click to view full family collection & grade bundles"
               @click=${() => openSellerStorefront(item.sellerPhone)}
             >
-              👨‍👩‍👧 ${item.sellerPhone || 'Parent'} Storefront
+              👨‍👩‍👧 Family Storefront
             </button>
           </div>
           <div class="date-badge" title="${formatExactDate(item.createdAt)}">
@@ -1344,7 +1342,7 @@ function renderStorefrontModal() {
                         👨‍👩‍👧 FAMILY COLLECTION (FEATURE 3A)
                       </div>
                       <h3 style="font-size:1.4rem;">
-                        Parent Storefront: ${selectedStorefront.sellerPhone}
+                        Community Family Storefront
                       </h3>
                       <p style="margin:4px 0 0 0;font-size:0.85rem;color:var(--text-muted);">
                         Total <strong>${selectedStorefront.totalBooks} textbooks</strong> available
@@ -1386,7 +1384,7 @@ function renderStorefrontModal() {
                               style="margin-top:8px;width:100%;font-size:0.72rem;"
                               @click=${() => {
                                 setBannerMessage(
-                                  `💬 WhatsApp Bundle Request sent to seller ${selectedStorefront?.sellerPhone} for all ${b.count} books in ${b.grade}!`
+                                  `💬 WhatsApp Bundle Request sent to family for all ${b.count} books in ${b.grade}!`
                                 );
                               }}
                             >
@@ -1522,7 +1520,7 @@ function renderPendingDemandsTab() {
                         <div style="display:flex;flex-direction:column;gap:2px;">
                           <div style="font-size:0.75rem;color:var(--text-dim);">
                             Waiting Parent:
-                            <strong style="color:var(--text);">${d.userPhone}</strong>
+                            <strong style="color:var(--text);">Community Parent</strong>
                           </div>
                           <div class="date-badge" title="${formatExactDate(d.createdAt)}">
                             📅 ${formatRelativeTime(d.createdAt)} (${formatExactDate(d.createdAt)})
@@ -1875,10 +1873,10 @@ function renderMatchedDemandsTab() {
                                 <div
                                   style="margin-top:6px;display:flex;flex-direction:column;gap:3px;font-size:0.8rem;color:var(--text-muted);"
                                 >
-                                  ${matchedBook?.sellerPhone ? html`<div>Seller: <strong style="color:var(--text);">${matchedBook.sellerPhone}</strong> ${matchedBook.title ? `(${matchedBook.title})` : ''}</div>` : ''}
+                                  ${matchedBook?.title ? html`<div>Book: <strong style="color:var(--text);">${matchedBook.title}</strong></div>` : ''}
                                   <div>
-                                    Buyer:
-                                    <strong style="color:var(--text);">${m.userPhone}</strong>
+                                    Exchange:
+                                    <strong style="color:var(--text);">Verified Community Parents</strong>
                                   </div>
                                   ${matchedBook?.soldAt || m.matchedAt ? html`<div>Completed: <strong>${formatExactDate(matchedBook?.soldAt || m.matchedAt!)}</strong></div>` : ''}
                                 </div>
@@ -1892,8 +1890,8 @@ function renderMatchedDemandsTab() {
                       <div class="card-footer">
                         <div style="display:flex;flex-direction:column;gap:2px;">
                           <div style="font-size:0.75rem;color:var(--text-dim);">
-                            ${m.status === 'fulfilled' ? 'Buyer Phone:' : 'Recipient Parent:'}
-                            <strong style="color:var(--text);">${m.userPhone}</strong>
+                            ${m.status === 'fulfilled' ? 'Status:' : 'Hold Recipient:'}
+                            <strong style="color:var(--text);">${m.status === 'fulfilled' ? 'Handover Verified' : 'Community Parent'}</strong>
                           </div>
                           <div class="date-badge" title="${formatExactDate(m.createdAt)}">
                             ${formatRelativeTime(m.createdAt)} (${formatExactDate(m.createdAt)})
