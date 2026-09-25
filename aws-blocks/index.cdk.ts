@@ -53,6 +53,7 @@ export const whatsappSecret = new secretsmanager.Secret(blocksStack, 'WhatsAppCr
       WHATSAPP_VERIFY_TOKEN: process.env.WHATSAPP_VERIFY_TOKEN || 'my_verify_token_123',
       WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '1251548201371379',
       WHATSAPP_APP_SECRET: process.env.WHATSAPP_APP_SECRET || '',
+      TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY || '',
     }),
     generateStringKey: 'dummy',
   },
@@ -61,6 +62,9 @@ export const whatsappSecret = new secretsmanager.Secret(blocksStack, 'WhatsAppCr
 // Add environment variable for runtime secret resolution
 blocksStack.handler.addEnvironment('WHATSAPP_SECRET_ARN', whatsappSecret.secretArn);
 blocksStack.handler.addEnvironment('WHATSAPP_SECRET_NAME', whatsappSecret.secretName);
+if (process.env.TYPESAFE_API_KEY) {
+  blocksStack.handler.addEnvironment('TYPESAFE_API_KEY', process.env.TYPESAFE_API_KEY);
+}
 
 // ─── 3. Governance: Amazon Bedrock Guardrails for PII Redaction ──────────────
 export const bedrockGuardrail = new bedrock.CfnGuardrail(blocksStack, 'BedrockPiiGuardrail', {
