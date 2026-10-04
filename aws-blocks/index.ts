@@ -2204,6 +2204,84 @@ export const processWhatsAppInbound = withDurableExecution<
       };
     }
 
+    // Universal Disconnect & Mark All Sold: allows parents to withdraw all listings and opt out cleanly
+    if (
+      /^#?(?:all\s*sold|tout\s*vendu|tous\s*vendus|mark\s*all\s*sold|disconnect|d[ée]connexion|deconnexion|opt\s*out|retirer\s*mes\s*livres|remove\s*my\s*books|quitter\s*relay)$/i.test(
+        rawText.trim()
+      ) ||
+      /\b(?:disconnect\s+from\s+(?:the\s+)?relay|mark\s+all\s+(?:as\s+)?sold|tous\s+mes\s+livres\s+sont\s+vendus|all\s+my\s+books\s+(?:are\s+)?sold)\b/i.test(
+        rawText.trim()
+      )
+    ) {
+      const allInventory = await getScopedActiveInventory(isSandbox);
+      const allDemands = await getScopedDemandBoard(isSandbox);
+      const cleanUserPhone = (payload.from_phone || '').replace(/\D/g, '');
+      const isPhoneMatch = (p?: string) => {
+        if (!p) return false;
+        const pClean = p.replace(/\D/g, '');
+        return (
+          pClean === cleanUserPhone ||
+          (pClean.length >= 8 &&
+            cleanUserPhone.length >= 8 &&
+            (pClean.endsWith(cleanUserPhone) || cleanUserPhone.endsWith(pClean)))
+        );
+      };
+
+      const parentBooks = allInventory.filter(
+        (i) => isPhoneMatch(i.sellerPhone) && (i.status === 'active' || i.status === 'reserved')
+      );
+
+      for (const book of parentBooks) {
+        await activeInventory.put({
+          ...book,
+          status: 'sold',
+          soldAt: Date.now(),
+        });
+        if (book.matchedDemandId) {
+          const demand = allDemands.find((d) => d.demandId === book.matchedDemandId);
+          if (demand && demand.status !== 'fulfilled') {
+            await demandBoard.put({
+              ...demand,
+              status: 'fulfilled',
+            });
+          }
+        }
+        emitLifecycleEvent('HandoverConfirmed', {
+          itemId: book.itemId,
+          sellerPhone: payload.from_phone,
+        });
+      }
+
+      const pendingDemands = allDemands.filter(
+        (d) => isPhoneMatch(d.userPhone) && d.status === 'pending'
+      );
+      for (const dem of pendingDemands) {
+        await demandBoard.put({
+          ...dem,
+          status: 'cancelled',
+        });
+      }
+
+      await clearStudySession(payload.from_phone);
+
+      const disconnectMsg =
+        detectedLang === 'fr'
+          ? parentBooks.length > 0
+            ? `✅ *Déconnexion Relay effectuée*\n\nVos ${parentBooks.length} livre(s) ont été marqués comme *Vendus* et retirés du catalogue disponible.\n\n• Votre numéro ne sera plus affiché ni partagé.\n• Vos éventuelles demandes ont été clôturées.\n\nMerci d'avoir participé à l'entraide scolaire ! Pour revenir à tout moment, écrivez-nous simplement un message. 🎓`
+            : `✅ *Statut Relay*\n\nVous n'avez actuellement aucun livre actif dans le catalogue. Votre numéro n'est partagé avec aucun parent.\n\nBonne rentrée scolaire ! 🎓`
+          : parentBooks.length > 0
+            ? `✅ *Relay Disconnect & Update Completed*\n\nAll ${parentBooks.length} of your book listing(s) have been marked as *Sold* and removed from active community listings.\n\n• Your phone number will no longer be shared with any parents.\n• Any pending wishlist requests have been closed.\n\nThank you for supporting fellow school families! If you ever want to list or find books again in the future, message us anytime. 🎓`
+            : `✅ *Relay Status Confirmation*\n\nYou currently have no active listings on Relay. Your number is not shared with any parents.\n\nHave a great school year! 🎓`;
+
+      await dispatchTextMessage(payload.from_phone, disconnectMsg);
+      return {
+        status: 'processed',
+        replyMessage: disconnectMsg,
+        extractedIntentsCount: 1,
+        vectorChunksCount: 0,
+      };
+    }
+
     // Universal Navigation: stop / finish session & lock-in streak
     if (/^#?(?:stop|finish|quit|arreter|pause|end)$/i.test(rawText)) {
       const profile = await getOrCreateStudentProfile(payload.from_phone, 'math_shapes', detectedLang);
@@ -3523,8 +3601,8 @@ export const processWhatsAppInbound = withDurableExecution<
             const allInventory = await getScopedActiveInventory(isSandbox);
             const allDemands = await getScopedDemandBoard(isSandbox);
 
-            // Check if sender is seller of a reserved or active item
-            const sellerItem = allInventory.find(
+            // Check if sender is seller of reserved or active item(s)
+            const sellerItems = allInventory.filter(
               (i) =>
                 i.sellerPhone === payload.from_phone &&
                 (i.status === 'reserved' || i.status === 'active')
@@ -3534,39 +3612,45 @@ export const processWhatsAppInbound = withDurableExecution<
               (d) => d.userPhone === payload.from_phone && d.status === 'matched'
             );
 
-            if (sellerItem) {
-              const buyerPhone = sellerItem.reservedForPhone || 'the buyer';
-              await activeInventory.put({
-                ...sellerItem,
-                status: 'sold',
-                soldAt: Date.now(),
-                soldToPhone: buyerPhone,
-              });
+            if (sellerItems.length > 0) {
+              for (const sellerItem of sellerItems) {
+                const buyerPhone = sellerItem.reservedForPhone || 'the buyer';
+                await activeInventory.put({
+                  ...sellerItem,
+                  status: 'sold',
+                  soldAt: Date.now(),
+                  soldToPhone: buyerPhone,
+                });
 
-              if (sellerItem.matchedDemandId) {
-                const demand = allDemands.find((d) => d.demandId === sellerItem.matchedDemandId);
-                if (demand) {
-                  await demandBoard.put({
-                    ...demand,
-                    status: 'fulfilled',
-                  });
+                if (sellerItem.matchedDemandId) {
+                  const demand = allDemands.find((d) => d.demandId === sellerItem.matchedDemandId);
+                  if (demand && demand.status !== 'fulfilled') {
+                    await demandBoard.put({
+                      ...demand,
+                      status: 'fulfilled',
+                    });
+                  }
                 }
-              }
 
-              emitLifecycleEvent('HandoverConfirmed', {
-                itemId: sellerItem.itemId,
-                sellerPhone: payload.from_phone,
-                buyerPhone,
-              });
-              metrics.emit('HandoverConfirmedCount', 1, { unit: 'Count' });
+                emitLifecycleEvent('HandoverConfirmed', {
+                  itemId: sellerItem.itemId,
+                  sellerPhone: payload.from_phone,
+                  buyerPhone,
+                });
+                metrics.emit('HandoverConfirmedCount', 1, { unit: 'Count' });
+              }
 
               const confirmMsg =
                 item.lang === 'fr'
-                  ? 'Merci ! Votre livre a été marqué comme vendu et retiré du catalogue disponible. Bonne rentrée scolaire ! 🎓'
-                  : 'Thank you! Your book has been marked as sold and removed from the active catalog. Have a great school year! 🎓';
+                  ? sellerItems.length > 1
+                    ? `Merci ! Vos ${sellerItems.length} livres ont été marqués comme vendus et retirés du catalogue disponible. Bonne rentrée scolaire ! 🎓`
+                    : `Merci ! Votre livre "${sellerItems[0].title}" a été marqué comme vendu et retiré du catalogue disponible. Bonne rentrée scolaire ! 🎓`
+                  : sellerItems.length > 1
+                    ? `Thank you! All ${sellerItems.length} of your books have been marked as sold and removed from the active catalog. Have a great school year! 🎓`
+                    : `Thank you! Your book "${sellerItems[0].title}" has been marked as sold and removed from the active catalog. Have a great school year! 🎓`;
               await dispatchTextMessage(payload.from_phone, confirmMsg);
               overallStatus = 'processed';
-              lastItemId = sellerItem.itemId;
+              lastItemId = sellerItems[0].itemId;
               lastReplyMessage = confirmMsg;
             } else if (buyerDemand) {
               await demandBoard.put({

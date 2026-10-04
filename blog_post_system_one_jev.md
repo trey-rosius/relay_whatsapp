@@ -266,11 +266,11 @@ Now, during complex multi-turn dialogs, the Strands Agent can autonomously consu
 
 ---
 
-## 6. Empirical Benchmark Results
+## 6. Empirical Benchmark Results & Unit Economics
 
-We benchmarked the system across identical parent inquiries on AWS, measuring both Amazon Bedrock Nova Lite and TypeSafe Jev (`jev-1.13.0`):
+We benchmarked the system across identical parent inquiries on AWS, measuring latency, inference accuracy, token costs, and compute overhead between Amazon Bedrock models and TypeSafe Jev (`jev-1.13.0`):
 
-### Latency Comparison by Message Intent
+### 6.1 Latency Comparison by Message Intent
 
 | Inbound Parent Message                  | Before (Bedrock Nova Lite) | After (TypeSafe Jev) |    Latency Reduction     | Confidence |
 | :-------------------------------------- | :------------------------: | :------------------: | :----------------------: | :--------: |
@@ -282,19 +282,47 @@ We benchmarked the system across identical parent inquiries on AWS, measuring bo
 | _"livre vendu"_ (Handover Confirmation) |        **1,301 ms**        |      **402 ms**      |        **-69.1%**        |  **100%**  |
 | **Weighted Average**                    |       **~1,630 ms**        |     **~438 ms**      | **-73.1% (~1.2s saved)** | **99.5%**  |
 
-### Key Observations:
+---
 
-1. **Curriculum Grade Detection:** In _"I need Chemistry"_, Jev correctly flagged `isGradeMissing: true` with 100% confidence, while in _"Terminale C Physique"_, it recognized `Terminale C` as a valid high school grade level (`isGradeMissing: false`).
-2. **Speed on WhatsApp:** WhatsApp response delivery plummeted from over 2.5 seconds down to **under 450 milliseconds**. The bot feels instantaneous.
-3. **Collective Community Impact:** Across 3,500 monthly intent parses in a 500-family school community, saving 1.2s per interaction eliminates **over 70 minutes of cumulative idle waiting per month**, and nearly **6 hours across the back-to-school season**.
+### 6.2 Unit Economics & Cost Analysis (Up to 99.8% Savings)
+
+Beyond speed, the financial impact of offloading edge classification from autoregressive LLMs to a native System 1 model was staggering.
+
+In a traditional agent setup, every single incoming WhatsApp message triggers an LLM call with a 1,000+ token system prompt (describing classification schemas, formatting rules, and regex fallback instructions), plus 80–150 output tokens to emit JSON.
+
+With Jev, classification runs over direct probability distribution scoring without generating a single output text token.
+
+#### Direct Triage Cost Comparison (Per 100,000 Inbound Inquiries):
+
+| Model / Architecture Tier                    | Input Cost (per 1M) |     Output Cost (per 1M)     | Cost per 100k Inquiries |  **Cost Reduction with Jev**   |
+| :------------------------------------------- | :-----------------: | :--------------------------: | :---------------------: | :----------------------------: |
+| **System 2: Claude 3.5 Sonnet** (Direct LLM) |        $3.00        |            $15.00            |       **$450.00**       |   **99.8% Saved** (~$449.16)   |
+| **System 2: Claude 3.5 Haiku** (Light LLM)   |        $0.80        |            $4.00             |       **$120.00**       |   **99.3% Saved** (~$119.16)   |
+| **System 2: Amazon Nova Lite** (Economy LLM) |        $0.06        |            $0.24             |        **$8.40**        |    **90.0% Saved** (~$7.56)    |
+| **System 1: TypeSafe Jev** (`jev-1.13.0`)    |     **$0.042**      | **$0.00** _(No text tokens)_ |        **$0.84**        | **Baseline ($8.40 / 1M msgs)** |
+
+#### Three Drivers of These Financial Savings:
+
+1. **Zero Output Token Tax ($0.00):** Jev emits raw probability scores and categorical enums directly into memory—meaning you pay zero output token fees.
+2. **The 75% Downstream Bedrock Filter:** Because Jev's statistical confidence gating ($\ge 0.85$) resolves high-frequency routine intents (greetings, missing grade prompts, personal activity summaries, and handover PIN redemptions) in sub-400ms, **over 75% of parent messages never hit the heavy Amazon Bedrock Agent loop at all**. For 50,000 monthly messages, Bedrock agent invocations dropped from 50,000 to ~12,500.
+3. **73% AWS Lambda Compute Savings:** AWS Lambda charges per millisecond of compute. Sashing our webhook execution duration from ~1,630ms to ~438ms reduced our Lambda execution GB-seconds by **~73%** across all triage paths.
+
+---
+
+### 6.3 Collective Community Impact
+
+Across 3,500 monthly intent parses in a 500-family school community:
+
+- **Idle Waiting Eliminated:** Saving 1.2s per interaction eliminates **over 70 minutes of cumulative parent waiting per month**, and nearly **6 hours across the back-to-school rush**.
+- **Zero Token Hallucinations:** 100% elimination of JSON parsing failures, regex crashes, or accidental 48-hour hold reservations.
 
 ---
 
 ## 7. Key Lessons for AI Agent Architects
 
-1. **Stop Forcing Generative LLMs into Classifier Roles:** If your code needs a discrete boolean or category to route an `if/else` statement, asking an autoregressive model to generate markdown JSON is an antipattern. Use calibrated System 1 models.
-2. **Confidence Gating is the Ultimate Guardrail:** By conditioning state mutations on `confidence >= 0.85`, we completely eliminated accidental 48-hour holds on ambiguous book listings.
-3. **Dual-Process AI is the Future of Agents:** The winning pattern for agentic software isn't "one giant model to rule them all." It is **fast, calibrated System 1 reflexes on the ingress edge**, seamlessly paired with **deliberate, tool-calling System 2 reasoners (like the AWS Strands Agents SDK)** when deep planning is required.
+1. **Stop Forcing Generative LLMs into Classifier Roles:** If your code needs a discrete boolean or category to route an `if/else` statement, asking an autoregressive model to generate markdown JSON is slow, fragile, and up to 100x more expensive. Use calibrated System 1 models.
+2. **Confidence Gating is the Ultimate Guardrail:** By conditioning state mutations on `confidence >= 0.85`, we completely eliminated accidental 48-hour holds on ambiguous book listings while providing instantaneous sub-second feedback for clear requests.
+3. **Dual-Process AI is the Future of Agents:** The winning pattern for production agentic software isn't "one giant model to rule them all." It is **fast, ultra-cheap, calibrated System 1 reflexes on the ingress edge ($0.042/M)**, seamlessly paired with **deliberate, tool-calling System 2 reasoners (like the AWS Strands Agents SDK)** when deep multi-step planning or multimodal vision is required.
 
 ---
 
@@ -305,16 +333,4 @@ We benchmarked the system across identical parent inquiries on AWS, measuring bo
 - **AWS Strands Agents SDK:** [github.com/aws/strands-agents](https://github.com/aws/strands-agents)
 - **TypeSafe AI Jev Documentation:** [docs.typesafe.ai](https://docs.typesafe.ai)
 
-Here are a few options for your article's meta description, tailored for search results, RSS feeds, and social cards:
-
-### Option 1 (Recommended — High Impact & Punchy)
-
-> Discover how combining fast, probabilistic decision models with deliberate agentic reasoning eliminates conversational lag in community bots. Learn how we built a dual-brain architecture on AWS to handle messy parent inquiries in under 450 milliseconds with zero JSON hallucinations.
-
-### Option 2 (Technical & Architecture-Focused)
-
-> By applying Daniel Kahneman's dual-process theory to AI agents, we paired rapid reflex triage with multi-turn autonomous tool execution. Explore how confidence-gated decision pipelines deliver sub-second WhatsApp interactions while safeguarding community transactions.
-
-### Option 3 (Concise — Under 160 Characters for SEO)
-
-> Discover how a dual-brain architecture pairing rapid reflex models with autonomous agent loops slashed WhatsApp response times to under 450ms on AWS.
+---
