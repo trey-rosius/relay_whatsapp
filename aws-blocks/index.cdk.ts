@@ -54,6 +54,8 @@ export const whatsappSecret = new secretsmanager.Secret(blocksStack, 'WhatsAppCr
       WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '1251548201371379',
       WHATSAPP_APP_SECRET: process.env.WHATSAPP_APP_SECRET || '',
       TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY || '',
+      STRANDS_DECIDER_URL: process.env.STRANDS_DECIDER_URL || 'http://localhost:8000',
+      STRANDS_DECIDER_MODEL: process.env.STRANDS_DECIDER_MODEL || 'StrandsAgents/strands-decider-2B-hobson-v19',
     }),
     generateStringKey: 'dummy',
   },
@@ -64,6 +66,12 @@ blocksStack.handler.addEnvironment('WHATSAPP_SECRET_ARN', whatsappSecret.secretA
 blocksStack.handler.addEnvironment('WHATSAPP_SECRET_NAME', whatsappSecret.secretName);
 if (process.env.TYPESAFE_API_KEY) {
   blocksStack.handler.addEnvironment('TYPESAFE_API_KEY', process.env.TYPESAFE_API_KEY);
+}
+if (process.env.STRANDS_DECIDER_URL) {
+  blocksStack.handler.addEnvironment('STRANDS_DECIDER_URL', process.env.STRANDS_DECIDER_URL);
+}
+if (process.env.STRANDS_DECIDER_MODEL) {
+  blocksStack.handler.addEnvironment('STRANDS_DECIDER_MODEL', process.env.STRANDS_DECIDER_MODEL);
 }
 
 // ─── 3. Governance: Amazon Bedrock Guardrails for PII Redaction ──────────────

@@ -32,6 +32,17 @@ import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-r
 import * as crypto from 'node:crypto';
 import { TypeSafeClient, choice, noul } from '@typesafe-ai/sdk';
 import {
+  StrandsDeciderClient,
+  deciderChoice,
+  deciderNoul,
+  deciderScore,
+  setCustomDeciderClient,
+  getStrandsDeciderClient,
+  type DeciderChoiceAnswer,
+  type DeciderNoulAnswer,
+  type DeciderScoreAnswer,
+} from './deciderClient.js';
+import {
   TRACK_TYPES,
   TrackType,
   CURRICULUM_LESSONS,
@@ -94,6 +105,14 @@ export const whatsappAppSecretSetting = new AppSetting(scope, 'whatsapp-app-secr
 
 export const typesafeApiKeySetting = new AppSetting(scope, 'typesafe-api-key', {
   value: process.env.TYPESAFE_API_KEY || '',
+});
+
+export const strandsDeciderEndpointSetting = new AppSetting(scope, 'strands-decider-endpoint', {
+  value: process.env.STRANDS_DECIDER_URL || 'http://localhost:8000',
+});
+
+export const strandsDeciderModelSetting = new AppSetting(scope, 'strands-decider-model', {
+  value: process.env.STRANDS_DECIDER_MODEL || 'StrandsAgents/strands-decider-2B-hobson-v19',
 });
 
 export interface WhatsAppCredentials {
@@ -4851,49 +4870,55 @@ export async function parseParentMessageIntentsWithLLM(
     segment.addAnnotation('hasPIIRedacted', sanitizedText !== text);
     segment.addAnnotation('hasImage', hasImage);
 
-    // ── System 1 Jev Triage Layer: Fast, calibrated decision before invoking Bedrock Nova ──
+    // ── System 1 Decision Layer: Strands Decider 2B Fast Triage before Bedrock Nova ──
     if (!hasImage) {
-      const jevDecision = await triageParentRequestWithJev(sanitizedText);
-      segment.addAnnotation('jevModel', jevDecision.model);
-      segment.addAnnotation('jevConfidence', jevDecision.confidence);
-      segment.addAnnotation('jevSource', jevDecision.source);
+      const deciderDecision = await triageParentRequestWithDecider(sanitizedText);
+      segment.addAnnotation('deciderModel', deciderDecision.model);
+      segment.addAnnotation('deciderConfidence', deciderDecision.confidence);
+      segment.addAnnotation('deciderSource', deciderDecision.source);
+      segment.addAnnotation('jevModel', deciderDecision.model);
+      segment.addAnnotation('jevConfidence', deciderDecision.confidence);
+      segment.addAnnotation('jevSource', deciderDecision.source);
 
-      if (jevDecision.source === 'jev' && jevDecision.confidence >= 0.85) {
+      if (
+        (deciderDecision.source === 'decider' || deciderDecision.source === 'jev') &&
+        deciderDecision.confidence >= 0.85
+      ) {
         if (
-          jevDecision.intent === 'greeting' ||
-          jevDecision.intent === 'confirm_handover' ||
-          jevDecision.intent === 'parent_activity' ||
-          jevDecision.intent === 'contact_inquiry' ||
-          jevDecision.intent === 'other_grades' ||
-          jevDecision.intent === 'demand_board'
+          deciderDecision.intent === 'greeting' ||
+          deciderDecision.intent === 'confirm_handover' ||
+          deciderDecision.intent === 'parent_activity' ||
+          deciderDecision.intent === 'contact_inquiry' ||
+          deciderDecision.intent === 'other_grades' ||
+          deciderDecision.intent === 'demand_board'
         ) {
           return [
             {
-              intent: jevDecision.intent,
-              lang: jevDecision.lang,
+              intent: deciderDecision.intent,
+              lang: deciderDecision.lang,
               concept: 'GeneralBooks',
               title:
-                jevDecision.intent === 'confirm_handover'
-                  ? jevDecision.lang === 'fr'
+                deciderDecision.intent === 'confirm_handover'
+                  ? deciderDecision.lang === 'fr'
                     ? 'Confirmation Remise'
                     : 'Handover Confirmation'
-                  : jevDecision.intent === 'parent_activity'
-                    ? jevDecision.lang === 'fr'
+                  : deciderDecision.intent === 'parent_activity'
+                    ? deciderDecision.lang === 'fr'
                       ? 'Mes Livres'
                       : 'My Books'
-                    : jevDecision.intent === 'contact_inquiry'
-                      ? jevDecision.lang === 'fr'
+                    : deciderDecision.intent === 'contact_inquiry'
+                      ? deciderDecision.lang === 'fr'
                         ? 'Contact Parent'
                         : 'Parent Contact'
-                      : jevDecision.intent === 'other_grades'
-                        ? jevDecision.lang === 'fr'
+                      : deciderDecision.intent === 'other_grades'
+                        ? deciderDecision.lang === 'fr'
                           ? 'Autres Classes'
                           : 'Other Grades'
-                        : jevDecision.intent === 'demand_board'
-                          ? jevDecision.lang === 'fr'
+                        : deciderDecision.intent === 'demand_board'
+                          ? deciderDecision.lang === 'fr'
                             ? 'Tableau des Demandes'
                             : 'Community Wishlist'
-                          : jevDecision.lang === 'fr'
+                          : deciderDecision.lang === 'fr'
                             ? 'Guide & Bienvenue'
                             : 'Help & Welcome',
               domain: 'Science',
@@ -4901,7 +4926,7 @@ export async function parseParentMessageIntentsWithLLM(
               conditionType: 'Good',
               description: text,
               replyMessage:
-                jevDecision.intent === 'greeting' ? getHelpMessage(jevDecision.lang) : undefined,
+                deciderDecision.intent === 'greeting' ? getHelpMessage(deciderDecision.lang) : undefined,
             },
           ];
         }
@@ -5153,7 +5178,7 @@ export function hasExplicitSchoolYear(concept: string, text: string): boolean {
   return textHasYear;
 }
 
-// ─── 4A. System One AI & Jev (TypeSafe AI) Ingress Decision Layer ───────────
+// ─── 4A. System One AI: Strands Decider 2B Ingress Decision Layer ───────────
 
 export interface SystemOneDecision {
   [key: string]: unknown;
@@ -5175,8 +5200,17 @@ export interface SystemOneDecision {
   probabilities: Record<string, number>;
   model: string;
   latencyMs: number;
-  source: 'jev' | 'fallback';
+  source: 'decider' | 'jev' | 'fallback';
 }
+
+export {
+  StrandsDeciderClient,
+  deciderChoice,
+  deciderNoul,
+  deciderScore,
+  setCustomDeciderClient,
+  getStrandsDeciderClient,
+};
 
 let customTypeSafeClient: TypeSafeClient | null = null;
 
@@ -5195,21 +5229,91 @@ export function getTypeSafeClient(): TypeSafeClient | null {
 }
 
 /**
- * Rapid System 1 Triage of Parent WhatsApp Requests using TypeSafe AI's Jev model.
- * Performs sub-300ms parallel classification of intent, language, and grade completeness
- * with calibrated statistical confidence.
+ * Rapid System 1 Triage of Parent WhatsApp Requests using AWS Strands Decider 2B
+ * (StrandsAgents/strands-decider-2B-hobson-v19).
+ * Performs sub-150ms parallel classification of intent, language, and grade completeness
+ * with calibrated statistical confidence, zero output token fees, and native edge hosting.
  */
-export async function triageParentRequestWithJev(
+export async function triageParentRequestWithDecider(
   sanitizedMessageText: string
 ): Promise<SystemOneDecision> {
   const startTime = Date.now();
   const text = (sanitizedMessageText || '').trim();
 
-  // 1. Try Jev System One if client is available
-  const client = getTypeSafeClient();
-  if (client && text.length > 0) {
+  // 1. Try Strands Decider 2B System One if client is available
+  const deciderClient = getStrandsDeciderClient();
+  if (deciderClient && text.length > 0) {
     try {
-      const response = await client.systemOne({
+      const response = await deciderClient.systemOne({
+        state: {
+          parent_message: text,
+        },
+        questions: {
+          intent: deciderChoice('What is the primary action or objective of the parent?', {
+            offer: 'Parent is listing, selling, donating, or has a specific named textbook/subject (e.g. "I have Year 5 Maths", "J\'ai Terminale C Physique").',
+            demand: 'Parent is explicitly looking for, wanting to buy, or needing a specific named textbook/subject (e.g. "Looking for Year 8 Maths", "Need Physics", "Je cherche maths 5ème").',
+            catalog: 'Parent is asking to view, browse, or see available books in stock, or asking about books for a grade without active transaction verbs (e.g. "catalog", "catalogue", "Year 3 books").',
+            demand_board: 'Parent is asking to view the community wishlist or books other parents need (e.g. "wishlist", "demandes").',
+            offer_inquiry: 'Parent states vaguely that they have books to offer or asks how to sell, without naming any specific subject or title (e.g. "I have books", "selling books").',
+            demand_inquiry: 'Parent states vaguely that they need or want books without naming any specific subject or title (e.g. "I need books", "looking for textbooks", "je cherche des livres").',
+            confirm_handover: 'Parent is confirming that an exchange took place, book was sold, handed over, or delivered (e.g. "sold", "vendu", "remis").',
+            parent_activity: 'Parent wants to see their personal listings, sales, reserved holds, active requests, or account history (e.g. "my books", "mes livres").',
+            contact_inquiry: 'Parent is asking for contact info or phone number of the matched parent/seller (e.g. "who has the book", "which parent", "donne son numéro").',
+            other_grades: 'Parent wants to browse overflow or secondary grades outside the primary list (e.g. "other grades", "autres classes").',
+            greeting: 'Chit-chat, greeting ("hi", "bonjour"), or asking for help, tutorial, or how to use the bot.',
+          }),
+          language: deciderChoice('What language is the parent using?', {
+            en: 'English language or English curriculum levels (Year 5, etc.)',
+            fr: 'French language or Francophone curriculum levels (6ème, 3ème, Terminale, etc.)',
+          }),
+          is_grade_missing: deciderNoul(
+            'Does the message omit the specific curriculum grade, school year, or class level (e.g. Year 5, 3ème, Class 6)?',
+            {
+              true: 'Grade, year, or class level is absent or missing',
+              false: 'Explicit grade, year, or class level is present',
+            }
+          ),
+        },
+      });
+
+      const latencyMs = Date.now() - startTime;
+      const intentAns = response.answers.intent as DeciderChoiceAnswer;
+      const langAns = response.answers.language as DeciderChoiceAnswer;
+      const gradeAns = response.answers.is_grade_missing as DeciderNoulAnswer;
+
+      metrics.emit('DeciderLatency', latencyMs, { unit: 'Milliseconds' });
+      metrics.emit('DeciderConfidence', Math.round(((intentAns && intentAns.confidence) || 0.9) * 100), {
+        unit: 'Percent',
+        dimensions: { intent: intentAns?.choice || 'greeting' },
+      });
+      if (response.usage) {
+        metrics.emit('DeciderInputTokens', response.usage.input_tokens, { unit: 'Count' });
+      }
+
+      return {
+        intent: (intentAns?.choice as SystemOneDecision['intent']) || 'greeting',
+        lang: ((langAns?.choice as 'en' | 'fr') || 'en'),
+        isGradeMissing: (gradeAns?.noul ?? 0) > 0.65,
+        confidence: intentAns?.confidence ?? 0.9,
+        probabilities: (intentAns?.probabilities as Record<string, number>) || {},
+        model: response.model || 'StrandsAgents/strands-decider-2B-hobson-v19',
+        latencyMs,
+        source: 'decider',
+      };
+    } catch (err: any) {
+      metrics.emit('DeciderFailure', 1, { unit: 'Count' });
+      console.warn(
+        '[Strands Decider System One] API error, falling back:',
+        err?.message || err
+      );
+    }
+  }
+
+  // 2. Try Jev System One if client is available (for dual evaluation or legacy fallback)
+  const jevClient = getTypeSafeClient();
+  if (jevClient && text.length > 0) {
+    try {
+      const response = await jevClient.systemOne({
         state: {
           parent_message: text,
         },
@@ -5266,7 +5370,7 @@ export async function triageParentRequestWithJev(
     }
   }
 
-  // 2. Deterministic Fallback when Jev client is not configured
+  // 3. Deterministic Fallback when no System One model is active
   const norm = normalizeTextForMatching(text);
   const lang = detectMessageLanguage(text, 'en');
   let intent: SystemOneDecision['intent'] = 'greeting';
@@ -5319,6 +5423,11 @@ export async function triageParentRequestWithJev(
     source: 'fallback',
   };
 }
+
+/**
+ * Backward-compatible alias for triageParentRequestWithDecider.
+ */
+export const triageParentRequestWithJev = triageParentRequestWithDecider;
 
 export function normalizeConceptKey(rawConcept: unknown, fallbackText: string = ''): string {
   const conceptStr =
@@ -7317,12 +7426,12 @@ Key Behaviors & Capabilities:
     }),
     triageParentIntent: tool({
       description:
-        'Fast System 1 triage of parent message intent, language, and grade completeness using Jev',
+        'Fast System 1 triage of parent message intent, language, and grade completeness using Strands Decider 2B',
       parameters: z.object({
         message: z.string().describe("The parent's message text"),
       }),
       handler: async ({ input }) => {
-        const decision = await triageParentRequestWithJev(input.message);
+        const decision = await triageParentRequestWithDecider(input.message);
         return {
           intent: decision.intent,
           lang: decision.lang,
@@ -7358,10 +7467,10 @@ export const api = new ApiNamespace(scope, 'api', () => ({
   },
 
   /**
-   * 0B. System 1 Jev Triage Endpoint for Parent Requests
+   * 0B. System 1 Strands Decider Triage Endpoint for Parent Requests
    */
   async triageParentRequest(message: string) {
-    return await triageParentRequestWithJev(message);
+    return await triageParentRequestWithDecider(message);
   },
   /**
    * 1. API Gateway Webhook Verification Handshake

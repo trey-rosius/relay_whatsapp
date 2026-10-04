@@ -30,6 +30,7 @@
     "test:unit": "tsx --test test/*.unit.test.ts",
     "test:e2e": "tsx -C browser test/e2e.test.ts",
     "test": "npm run test:unit && npm run test:e2e",
+    "benchmark:decider": "tsx aws-blocks/scripts/benchmark-jev-vs-decider.ts",
     "seed:matches": "tsx aws-blocks/scripts/seed-matches.ts",
     "clear:matches": "tsx aws-blocks/scripts/clear-matches.ts",
     "autogen": "tsx aws-blocks/scripts/autogen-curriculum.ts",
