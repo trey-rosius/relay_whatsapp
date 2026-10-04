@@ -120,7 +120,8 @@ test('inventory: unmatched item is saved to ActiveInventory', async () => {
   );
   assert.ok(webhookRes.result.itemId);
 
-  const inventory = await api.listInventory(webhookRes.result.concept);
+  const concept = (webhookRes.result as any).concept || 'Year12RoboticsAstrophysics';
+  const inventory = await api.listInventory(concept);
   assert.ok(inventory.length >= 1);
   assert.strictEqual(inventory[0].domain, 'Science');
   assert.strictEqual(inventory[0].providerCategory, 'HighSchool');

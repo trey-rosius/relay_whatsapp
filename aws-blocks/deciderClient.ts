@@ -133,6 +133,7 @@ export class StrandsDeciderClient {
   constructor(options?: StrandsDeciderClientOptions) {
     this.endpoint = (
       options?.endpoint ||
+      process.env.STRANDS_DECIDER_FARGATE_URL ||
       process.env.STRANDS_DECIDER_URL ||
       process.env.STRANDS_DECIDER_ENDPOINT ||
       'http://localhost:8000'
@@ -196,6 +197,7 @@ export function setCustomDeciderClient(client: StrandsDeciderClient | null) {
 export function getStrandsDeciderClient(): StrandsDeciderClient | null {
   if (customDeciderClient) return customDeciderClient;
   const endpoint =
+    process.env.STRANDS_DECIDER_FARGATE_URL ||
     process.env.STRANDS_DECIDER_URL ||
     process.env.STRANDS_DECIDER_ENDPOINT;
   if (!endpoint && !process.env.STRANDS_DECIDER_ENABLED) {

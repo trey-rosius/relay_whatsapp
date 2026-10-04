@@ -10,6 +10,8 @@ import {
   aws_bedrock as bedrock,
   aws_cloudwatch as cloudwatch,
   aws_lambda as lambda,
+  aws_ec2 as ec2,
+  aws_ecs as ecs,
 } from 'aws-cdk-lib';
 
 import { Hosting, BlocksStack, SandboxDisableDeletionProtection } from '@aws-blocks/blocks/cdk';
@@ -368,3 +370,85 @@ if (!sandboxMode) {
     api: blocksStack,
   });
 }
+
+// ─── 9. System 1 Decision Hosting: AWS Fargate Service for Strands Decider 2B ──
+export const deciderVpc = new ec2.Vpc(blocksStack, 'DeciderVpc', {
+  maxAzs: 2,
+  natGateways: sandboxMode ? 0 : 1,
+  subnetConfiguration: [
+    {
+      cidrMask: 24,
+      name: 'Public',
+      subnetType: ec2.SubnetType.PUBLIC,
+    },
+    {
+      cidrMask: 24,
+      name: 'Private',
+      subnetType: sandboxMode ? ec2.SubnetType.PUBLIC : ec2.SubnetType.PRIVATE_WITH_EGRESS,
+    },
+  ],
+});
+
+export const deciderCluster = new ecs.Cluster(blocksStack, 'DeciderCluster', {
+  vpc: deciderVpc,
+  clusterName: `${stackName.slice(0, 24)}-decider-cluster`,
+});
+
+export const deciderTaskDef = new ecs.FargateTaskDefinition(blocksStack, 'DeciderTaskDef', {
+  memoryLimitMiB: 8192,
+  cpu: 2048,
+  runtimePlatform: {
+    operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+    cpuArchitecture: ecs.CpuArchitecture.ARM64,
+  },
+});
+
+export const deciderContainer = deciderTaskDef.addContainer('StrandsDeciderContainer', {
+  image: ecs.ContainerImage.fromAsset(join(__dirname, '..'), {
+    file: 'Dockerfile.decider',
+  }),
+  logging: ecs.LogDrivers.awsLogs({
+    streamPrefix: 'strands-decider',
+  }),
+  environment: {
+    PORT: '8000',
+    MODEL: process.env.STRANDS_DECIDER_MODEL || 'StrandsAgents/strands-decider-2B-hobson-v19',
+  },
+});
+
+deciderContainer.addPortMappings({
+  containerPort: 8000,
+  protocol: ecs.Protocol.TCP,
+});
+
+export const deciderSecurityGroup = new ec2.SecurityGroup(blocksStack, 'DeciderSecurityGroup', {
+  vpc: deciderVpc,
+  description: 'Inbound access to Strands Decider on port 8000 from Lambda handler',
+  allowAllOutbound: true,
+});
+
+deciderSecurityGroup.addIngressRule(
+  ec2.Peer.ipv4(deciderVpc.vpcCidrBlock),
+  ec2.Port.tcp(8000),
+  'Allow internal VPC traffic to Strands Decider 2B service'
+);
+
+export const deciderService = new ecs.FargateService(blocksStack, 'DeciderService', {
+  cluster: deciderCluster,
+  taskDefinition: deciderTaskDef,
+  desiredCount: 1,
+  capacityProviderStrategies: [
+    {
+      capacityProvider: 'FARGATE_SPOT',
+      weight: 1,
+    },
+  ],
+  serviceName: `${stackName.slice(0, 24)}-decider`,
+  vpcSubnets: { subnetType: sandboxMode ? ec2.SubnetType.PUBLIC : ec2.SubnetType.PRIVATE_WITH_EGRESS },
+  assignPublicIp: sandboxMode,
+  securityGroups: [deciderSecurityGroup],
+});
+
+const fargateEndpoint = `http://${stackName.slice(0, 16)}-decider.internal:8000`;
+blocksStack.handler.addEnvironment('STRANDS_DECIDER_FARGATE_URL', fargateEndpoint);
+
